@@ -316,3 +316,36 @@ select:focus-visible {
   background: #fde8e8;
   color: #a12626;
 }
+
+
+/* TASK 1.5 - COLUMN SORTING */
+
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  color: #314565;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.sort-button:hover {
+  background: #e0edff;
+  color: #075ba9;
+}
+
+.sort-button:focus-visible {
+  outline: 3px solid #075ba9;
+  outline-offset: 3px;
+}
+
+.sort-button span {
+  font-size: 15px;
+  color: #075ba9;
+}
+
