@@ -2,6 +2,7 @@
 import "./style.css";
 import { AudioEngine } from "./audio-engine";
 import { AudioTaskQueue } from "./audio-queue-controller";
+import { AudioVisualizer } from "./audio-visualizer";
 
 // ==================================================
 // 1. TRACK DATA
@@ -376,6 +377,15 @@ const playBtn =
 const stopBtn =
   getElement<HTMLButtonElement>("#stop-btn");
 
+// TASK 2.7 - Initialize frequency visualizer
+const visualizerCanvas =
+  getElement<HTMLCanvasElement>("#visualizer");
+
+const visualizer = new AudioVisualizer(
+  visualizerCanvas,
+  audioEngine.getAnalyser()
+);
+
 // ==================================================
 // 5. HELPERS
 // ==================================================
@@ -485,12 +495,17 @@ async function playTrack(): Promise<void> {
 
     if (isDisposed) return;
 
+    // Restart the frequency animation for the current audio source.
+    visualizer.stop();
+    visualizer.start();
+
     stopBtn.disabled = false;
     playBtn.textContent = "↻ Replay";
 
     playerStatus.textContent = "Playing";
     playerMessage.textContent = "Audio is playing.";
   } catch (error) {
+    visualizer.stop();
     console.error("Playback error:", error);
 
     if (!isDisposed) {
@@ -513,6 +528,7 @@ playBtn.addEventListener("click", () => {
 
 stopBtn.addEventListener("click", () => {
   audioEngine.stop();
+  visualizer.stop();
 
   stopBtn.disabled = true;
   playBtn.textContent = "▶ Play";
@@ -524,6 +540,8 @@ stopBtn.addEventListener("click", () => {
 
 audioEngine.onEnded = () => {
   if (isDisposed) return;
+
+  visualizer.stop();
 
   stopBtn.disabled = true;
   playBtn.textContent = "▶ Play";
@@ -539,6 +557,8 @@ function prepareTrack(
 ): void {
   if (isDisposed) return;
 
+  // Stop rendering bars from the previous track.
+  visualizer.stop();
   audioEngine.setBuffer(buffer);
 
   currentTitle.textContent = track.title;
@@ -735,6 +755,7 @@ clearHistoryBtn.addEventListener("click", () => {
 window.addEventListener("pagehide", () => {
   isDisposed = true;
 
+  visualizer.dispose();
   audioQueue.dispose();
   decodedTracks.clear();
 

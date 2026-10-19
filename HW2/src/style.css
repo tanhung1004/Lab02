@@ -603,3 +603,37 @@ a:focus-visible {
     flex: none;
   }
 }
+
+/* =========================================
+   TASK 2.7 - REAL-TIME AUDIO VISUALIZER
+   ========================================= */
+
+.visualizer-panel {
+  position: relative;
+  background: linear-gradient(
+    135deg,
+    #101e40,
+    #172c58,
+    #1b376a
+  );
+  overflow: hidden;
+}
+
+#visualizer {
+  display: block;
+  width: 100%;
+  height: 220px;
+  border-radius: 10px;
+}
+
+@media (max-width: 600px) {
+  #visualizer {
+    height: 170px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #visualizer {
+    transition: none;
+  }
+}
