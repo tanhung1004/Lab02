@@ -1,5 +1,11 @@
 
-import { useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
 import type {
   DataGridProps,
 } from "../types/data-grid-contract";
@@ -8,31 +14,47 @@ export default function DataGrid<T extends object>({
   data,
   columns,
   ariaLabel,
+  onRowSelect,
 }: DataGridProps<T>) {
-  // Sorting state
+  // Sorting
   const [sortKey, setSortKey] = useState<keyof T | null>(null);
   const [sortDirection, setSortDirection] =
     useState<"asc" | "desc">("asc");
 
-  // Filtering and pagination state
+  // Filtering and pagination
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
 
-  // Identify categories from the provided data
+  // Keyboard focus and selection
+  const [activeCell, setActiveCell] = useState({
+    row: 0,
+    col: 0,
+  });
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  const cellRefs = useRef<Map<string, HTMLTableCellElement>>(
+    new Map()
+  );
+
   const categories = useMemo(() => {
     return Array.from(
       new Set(
-        data.map((item) => {
-          const record = item as Record<string, unknown>;
-          return String(record.category ?? "");
-        })
+        data.map((item) =>
+          String(
+            (item as Record<string, unknown>).category ?? ""
+          )
+        )
       )
-    ).filter(Boolean).sort();
+    )
+      .filter(Boolean)
+      .sort();
   }, [data]);
 
-  // Handle sorting
   const handleSort = (key: keyof T) => {
     if (sortKey === key) {
       setSortDirection((prev) =>
@@ -42,23 +64,25 @@ export default function DataGrid<T extends object>({
       setSortKey(key);
       setSortDirection("asc");
     }
+    setActiveCell({ row: 0, col: 0 });
   };
 
-  // Apply filtering, then sorting
   const processedData = useMemo(() => {
     const filtered = data.filter((item) => {
       const record = item as Record<string, unknown>;
-
-      const name = String(record.name ?? "").toLowerCase();
-      const id = String(record.id ?? "").toLowerCase();
-      const itemCategory = String(record.category ?? "");
+      const query = search.trim().toLowerCase();
 
       const matchesSearch =
-        name.includes(search.trim().toLowerCase()) ||
-        id.includes(search.trim().toLowerCase());
+        String(record.name ?? "")
+          .toLowerCase()
+          .includes(query) ||
+        String(record.id ?? "")
+          .toLowerCase()
+          .includes(query);
 
       const matchesCategory =
-        category === "All" || itemCategory === category;
+        category === "All" ||
+        String(record.category ?? "") === category;
 
       return matchesSearch && matchesCategory;
     });
@@ -66,20 +90,19 @@ export default function DataGrid<T extends object>({
     if (sortKey === null) return filtered;
 
     return [...filtered].sort((a, b) => {
-      const valueA = a[sortKey];
-      const valueB = b[sortKey];
+      const aValue = a[sortKey];
+      const bValue = b[sortKey];
 
       if (
-        typeof valueA === "number" &&
-        typeof valueB === "number"
+        typeof aValue === "number" &&
+        typeof bValue === "number"
       ) {
-        return sortDirection === "asc"
-          ? valueA - valueB
-          : valueB - valueA;
+        const result = aValue - bValue;
+        return sortDirection === "asc" ? result : -result;
       }
 
-      const result = String(valueA ?? "").localeCompare(
-        String(valueB ?? ""),
+      const result = String(aValue ?? "").localeCompare(
+        String(bValue ?? ""),
         undefined,
         { numeric: true, sensitivity: "base" }
       );
@@ -88,7 +111,6 @@ export default function DataGrid<T extends object>({
     });
   }, [data, search, category, sortKey, sortDirection]);
 
-  // Pagination
   const totalPages = Math.max(
     1,
     Math.ceil(processedData.length / pageSize)
@@ -111,7 +133,102 @@ export default function DataGrid<T extends object>({
     processedData.length
   );
 
-  // Format cell content
+  // Stable row identifier
+  const getRowId = (item: T, index: number) => {
+    const record = item as Record<string, unknown>;
+    return String(record.id ?? `row-${index}`);
+  };
+
+  // Keep keyboard position inside visible rows
+  useEffect(() => {
+    setActiveCell((previous) => ({
+      row: Math.min(
+        previous.row,
+        Math.max(0, pageData.length - 1)
+      ),
+      col: Math.min(
+        previous.col,
+        Math.max(0, columns.length - 1)
+      ),
+    }));
+  }, [pageData.length, columns.length]);
+
+  const focusCell = (row: number, col: number) => {
+    if (pageData.length === 0 || columns.length === 0) {
+      return;
+    }
+
+    const nextRow = Math.max(
+      0,
+      Math.min(row, pageData.length - 1)
+    );
+
+    const nextCol = Math.max(
+      0,
+      Math.min(col, columns.length - 1)
+    );
+
+    setActiveCell({ row: nextRow, col: nextCol });
+
+    const key = `${nextRow}-${nextCol}`;
+    cellRefs.current.get(key)?.focus();
+  };
+
+  const toggleRowSelection = (item: T, rowIndex: number) => {
+    const id = getRowId(item, rowIndex);
+
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+
+      return next;
+    });
+  };
+
+  const handleCellKeyDown = (
+    event: React.KeyboardEvent<HTMLTableCellElement>,
+    rowIndex: number,
+    colIndex: number,
+    item: T
+  ) => {
+    switch (event.key) {
+      case "ArrowUp":
+        event.preventDefault();
+        focusCell(rowIndex - 1, colIndex);
+        break;
+
+      case "ArrowDown":
+        event.preventDefault();
+        focusCell(rowIndex + 1, colIndex);
+        break;
+
+      case "ArrowLeft":
+        event.preventDefault();
+        focusCell(rowIndex, colIndex - 1);
+        break;
+
+      case "ArrowRight":
+        event.preventDefault();
+        focusCell(rowIndex, colIndex + 1);
+        break;
+
+      case "Enter":
+        event.preventDefault();
+        onRowSelect?.(item);
+        break;
+
+      case " ":
+        event.preventDefault();
+        toggleRowSelection(item, rowIndex);
+        break;
+    }
+  };
+
   const renderCell = (item: T, key: keyof T) => {
     const value = item[key];
 
@@ -147,7 +264,7 @@ export default function DataGrid<T extends object>({
 
   return (
     <>
-      {/* Search and category filters */}
+      {/* Search and filtering */}
       <div className="toolbar">
         <input
           type="search"
@@ -157,6 +274,7 @@ export default function DataGrid<T extends object>({
           onChange={(event) => {
             setSearch(event.target.value);
             setPage(1);
+            setActiveCell({ row: 0, col: 0 });
           }}
         />
 
@@ -166,6 +284,7 @@ export default function DataGrid<T extends object>({
           onChange={(event) => {
             setCategory(event.target.value);
             setPage(1);
+            setActiveCell({ row: 0, col: 0 });
           }}
         >
           <option value="All">All Categories</option>
@@ -182,6 +301,7 @@ export default function DataGrid<T extends object>({
           onChange={(event) => {
             setPageSize(Number(event.target.value));
             setPage(1);
+            setActiveCell({ row: 0, col: 0 });
           }}
         >
           <option value={5}>5 rows per page</option>
@@ -190,11 +310,21 @@ export default function DataGrid<T extends object>({
         </select>
       </div>
 
-      {/* Data Grid */}
+      <p className="grid-instructions" id="grid-instructions">
+        Use arrow keys to navigate cells, Enter to activate
+        a row, and Space to toggle row selection.
+      </p>
+
+      {/* Accessible Data Grid */}
       <div className="table-wrapper">
-        <table aria-label={ariaLabel}>
+        <table
+          role="grid"
+          aria-label={ariaLabel}
+          aria-describedby="grid-instructions"
+          aria-multiselectable="true"
+        >
           <thead>
-            <tr>
+            <tr role="row">
               {columns.map((column) => {
                 const isSorted =
                   sortKey === column.accessorKey;
@@ -203,6 +333,7 @@ export default function DataGrid<T extends object>({
                   <th
                     key={String(column.accessorKey)}
                     scope="col"
+                    role="columnheader"
                     aria-sort={
                       isSorted
                         ? sortDirection === "asc"
@@ -239,25 +370,79 @@ export default function DataGrid<T extends object>({
 
           <tbody>
             {pageData.length > 0 ? (
-              pageData.map((item, rowIndex) => (
-                <tr key={(currentPage - 1) * pageSize + rowIndex}>
-                  {columns.map((column) => (
-                    <td
-                      key={String(column.accessorKey)}
-                      className={
-                        column.accessorKey === "name"
-                          ? "product-name"
-                          : ""
-                      }
-                    >
-                      {renderCell(item, column.accessorKey)}
-                    </td>
-                  ))}
-                </tr>
-              ))
+              pageData.map((item, rowIndex) => {
+                const rowId = getRowId(
+                  item,
+                  (currentPage - 1) * pageSize + rowIndex
+                );
+
+                const isSelected = selectedIds.has(rowId);
+
+                return (
+                  <tr
+                    key={rowId}
+                    role="row"
+                    aria-selected={isSelected}
+                    className={
+                      isSelected ? "selected-row" : ""
+                    }
+                  >
+                    {columns.map((column, colIndex) => {
+                      const refKey = `${rowIndex}-${colIndex}`;
+
+                      return (
+                        <td
+                          key={String(column.accessorKey)}
+                          role="gridcell"
+                          tabIndex={
+                            activeCell.row === rowIndex &&
+                            activeCell.col === colIndex
+                              ? 0
+                              : -1
+                          }
+                          ref={(element) => {
+                            if (element) {
+                              cellRefs.current.set(
+                                refKey,
+                                element
+                              );
+                            } else {
+                              cellRefs.current.delete(refKey);
+                            }
+                          }}
+                          onFocus={() =>
+                            setActiveCell({
+                              row: rowIndex,
+                              col: colIndex,
+                            })
+                          }
+                          onKeyDown={(event) =>
+                            handleCellKeyDown(
+                              event,
+                              rowIndex,
+                              colIndex,
+                              item
+                            )
+                          }
+                          className={
+                            column.accessorKey === "name"
+                              ? "product-name"
+                              : ""
+                          }
+                        >
+                          {renderCell(item, column.accessorKey)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })
             ) : (
-              <tr>
-                <td colSpan={columns.length}>
+              <tr role="row">
+                <td
+                  role="gridcell"
+                  colSpan={columns.length}
+                >
                   No matching products found.
                 </td>
               </tr>
@@ -280,7 +465,10 @@ export default function DataGrid<T extends object>({
           <button
             type="button"
             disabled={currentPage === 1}
-            onClick={() => setPage(currentPage - 1)}
+            onClick={() => {
+              setPage(currentPage - 1);
+              setActiveCell({ row: 0, col: 0 });
+            }}
           >
             Previous
           </button>
@@ -292,7 +480,10 @@ export default function DataGrid<T extends object>({
           <button
             type="button"
             disabled={currentPage === totalPages}
-            onClick={() => setPage(currentPage + 1)}
+            onClick={() => {
+              setPage(currentPage + 1);
+              setActiveCell({ row: 0, col: 0 });
+            }}
           >
             Next
           </button>
