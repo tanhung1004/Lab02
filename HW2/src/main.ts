@@ -47,11 +47,45 @@ const tracks: Track[] = [
 // ==================================================
 
 const audioEngine = new AudioEngine();
+
 const audioQueue = new AudioTaskQueue(
   audioEngine.getContext()
 );
 
+// Limit decoded audio cache to two tracks
 const decodedTracks = new Map<string, AudioBuffer>();
+const MAX_CACHED_TRACKS = 2;
+
+// Save the decoded buffer and evict the oldest item
+function cacheTrack(
+  id: string,
+  buffer: AudioBuffer
+): void {
+  decodedTracks.delete(id);
+  decodedTracks.set(id, buffer);
+
+  if (decodedTracks.size > MAX_CACHED_TRACKS) {
+    const oldestKey =
+      decodedTracks.keys().next().value;
+
+    if (oldestKey !== undefined) {
+      decodedTracks.delete(oldestKey);
+    }
+  }
+}
+
+// Refresh the recently used track
+function getCachedTrack(
+  id: string
+): AudioBuffer | undefined {
+  const buffer = decodedTracks.get(id);
+
+  if (buffer) {
+    cacheTrack(id, buffer);
+  }
+
+  return buffer;
+}
 
 type QueueStatus =
   | "Waiting"
@@ -67,16 +101,19 @@ interface QueueEntry {
 }
 
 const queueEntries: QueueEntry[] = [];
+
 let queueId = 0;
 let activeEntryId: string | null = null;
 let isStartingPlayback = false;
 let isDisposed = false;
+let isPlaying = false;
 
 // ==================================================
 // 3. RENDER USER INTERFACE
 // ==================================================
 
-const app = document.querySelector<HTMLDivElement>("#app");
+const app =
+  document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
   throw new Error("Missing #app element");
@@ -85,8 +122,11 @@ if (!app) {
 app.innerHTML = `
   <div class="app-shell">
 
+    <!-- HEADER -->
     <header class="header">
-      <a href="#home" class="logo">♫ WaveFlow</a>
+      <a href="#home" class="logo">
+        ♫ WaveFlow
+      </a>
 
       <nav aria-label="Main navigation">
         <a href="#home">Home</a>
@@ -94,16 +134,23 @@ app.innerHTML = `
         <a href="#queue">Queue</a>
       </nav>
 
-      <span class="header-label">AUDIO STUDIO</span>
+      <span class="header-label">
+        AUDIO STUDIO
+      </span>
     </header>
 
+    <!-- HERO -->
     <section class="hero" id="home">
+
       <div class="hero-copy">
         <span class="tag">
           TYPESCRIPT + WEB AUDIO API
         </span>
 
-        <h1>Your Music.<br>Your Flow.</h1>
+        <h1>
+          Your Music.<br>
+          Your Flow.
+        </h1>
 
         <p>
           Experience asynchronous audio processing,
@@ -123,17 +170,24 @@ app.innerHTML = `
           <div class="vinyl-center">♫</div>
         </div>
       </div>
+
     </section>
 
+    <!-- AUDIO PLAYER -->
     <section class="player-card" id="player">
 
       <div class="section-heading">
         <div>
-          <span class="eyebrow">AUDIO PLAYER</span>
+          <span class="eyebrow">
+            AUDIO PLAYER
+          </span>
           <h2>Now Playing</h2>
         </div>
 
-        <span class="status-label" id="player-status">
+        <span
+          class="status-label"
+          id="player-status"
+        >
           Idle
         </span>
       </div>
@@ -145,12 +199,14 @@ app.innerHTML = `
           <h3 id="current-title">
             No track selected
           </h3>
+
           <p id="current-artist">
             Choose a track from the library
           </p>
         </div>
       </div>
 
+      <!-- FREQUENCY VISUALIZER -->
       <div class="visualizer-panel">
         <div class="visualizer-header">
           <span>Frequency Spectrum</span>
@@ -165,8 +221,12 @@ app.innerHTML = `
         ></canvas>
       </div>
 
+      <!-- PROGRESS BAR -->
       <div class="progress-bar">
-        <div class="progress-fill" id="progress-fill"></div>
+        <div
+          class="progress-fill"
+          id="progress-fill"
+        ></div>
       </div>
 
       <div class="time-labels">
@@ -174,7 +234,9 @@ app.innerHTML = `
         <span id="total-time">0:00</span>
       </div>
 
+      <!-- PLAYER CONTROLS -->
       <div class="player-controls">
+
         <button type="button" disabled>
           ⏮ Previous
         </button>
@@ -188,7 +250,11 @@ app.innerHTML = `
           ▶ Play
         </button>
 
-        <button type="button" id="stop-btn" disabled>
+        <button
+          type="button"
+          id="stop-btn"
+          disabled
+        >
           ■ Stop
         </button>
 
@@ -205,14 +271,20 @@ app.innerHTML = `
       >
         Add a track to the queue to load audio.
       </p>
+
     </section>
 
+    <!-- LIBRARY AND FIFO QUEUE -->
     <div class="content-grid">
 
+      <!-- TRACK LIBRARY -->
       <section class="panel" id="library">
+
         <div class="section-heading">
           <div>
-            <span class="eyebrow">MUSIC COLLECTION</span>
+            <span class="eyebrow">
+              MUSIC COLLECTION
+            </span>
             <h2>Track Library</h2>
           </div>
 
@@ -224,11 +296,16 @@ app.innerHTML = `
         <div class="track-list">
           ${tracks.map(track => `
             <div class="track-item">
-              <div class="track-icon">♫</div>
+
+              <div class="track-icon">
+                ♫
+              </div>
 
               <div class="track-details">
                 <h3>${track.title}</h3>
-                <p>${track.artist} · Sample audio</p>
+                <p>
+                  ${track.artist} · Sample audio
+                </p>
               </div>
 
               <button
@@ -239,24 +316,36 @@ app.innerHTML = `
               >
                 + Queue
               </button>
+
             </div>
           `).join("")}
         </div>
+
       </section>
 
+      <!-- PROCESSING QUEUE -->
       <section class="panel" id="queue">
+
         <div class="section-heading">
           <div>
-            <span class="eyebrow">FIFO ENGINE</span>
+            <span class="eyebrow">
+              FIFO ENGINE
+            </span>
             <h2>Processing Queue</h2>
           </div>
 
-          <span class="count" id="queue-count">
+          <span
+            class="count"
+            id="queue-count"
+          >
             0 pending
           </span>
         </div>
 
-        <ol class="queue-list" id="queue-list">
+        <ol
+          class="queue-list"
+          id="queue-list"
+        >
           <li class="empty-queue">
             No audio tasks in the queue.
           </li>
@@ -265,11 +354,15 @@ app.innerHTML = `
         <div class="queue-footer">
           <div>
             <strong>Engine Status</strong>
-            <span id="queue-status">Idle</span>
+            <span id="queue-status">
+              Idle
+            </span>
           </div>
         </div>
 
+        <!-- CANCELLATION BUTTONS -->
         <div class="queue-actions">
+
           <button
             type="button"
             id="cancel-active-btn"
@@ -296,6 +389,7 @@ app.innerHTML = `
           >
             Clear History
           </button>
+
         </div>
 
         <p
@@ -306,13 +400,14 @@ app.innerHTML = `
         >
           No pending tasks.
         </p>
-      </section>
 
+      </section>
     </div>
 
     <footer class="footer">
       WaveFlow Music Studio · FIFO · AbortController
     </footer>
+
   </div>
 `;
 
@@ -323,10 +418,13 @@ app.innerHTML = `
 function getElement<T extends Element>(
   selector: string
 ): T {
-  const element = document.querySelector<T>(selector);
+  const element =
+    document.querySelector<T>(selector);
 
   if (!element) {
-    throw new Error(`Missing element: ${selector}`);
+    throw new Error(
+      `Missing element: ${selector}`
+    );
   }
 
   return element;
@@ -345,13 +443,19 @@ const queueMessage =
   getElement<HTMLElement>("#queue-message");
 
 const cancelActiveBtn =
-  getElement<HTMLButtonElement>("#cancel-active-btn");
+  getElement<HTMLButtonElement>(
+    "#cancel-active-btn"
+  );
 
 const clearPendingBtn =
-  getElement<HTMLButtonElement>("#clear-pending-btn");
+  getElement<HTMLButtonElement>(
+    "#clear-pending-btn"
+  );
 
 const clearHistoryBtn =
-  getElement<HTMLButtonElement>("#clear-history-btn");
+  getElement<HTMLButtonElement>(
+    "#clear-history-btn"
+  );
 
 const playerStatus =
   getElement<HTMLElement>("#player-status");
@@ -377,21 +481,23 @@ const playBtn =
 const stopBtn =
   getElement<HTMLButtonElement>("#stop-btn");
 
-// TASK 2.7 - Initialize frequency visualizer
 const visualizerCanvas =
   getElement<HTMLCanvasElement>("#visualizer");
 
+// Initialize visualizer with existing AnalyserNode
 const visualizer = new AudioVisualizer(
   visualizerCanvas,
   audioEngine.getAnalyser()
 );
 
 // ==================================================
-// 5. HELPERS
+// 5. HELPER FUNCTIONS
 // ==================================================
 
 function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "0:00";
+  if (!Number.isFinite(seconds)) {
+    return "0:00";
+  }
 
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.floor(seconds % 60);
@@ -407,7 +513,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 // ==================================================
-// 6. RENDER QUEUE
+// 6. RENDER FIFO QUEUE
 // ==================================================
 
 function renderQueue(): void {
@@ -423,6 +529,7 @@ function renderQueue(): void {
     const status = document.createElement("span");
     status.className =
       `queue-task-status ${entry.status.toLowerCase()}`;
+
     status.textContent = entry.status;
 
     item.append(title, status);
@@ -432,30 +539,33 @@ function renderQueue(): void {
   if (queueEntries.length === 0) {
     const item = document.createElement("li");
     item.className = "empty-queue";
-    item.textContent = "No audio tasks in the queue.";
+
+    item.textContent =
+      "No audio tasks in the queue.";
+
     queueList.appendChild(item);
   }
 
   const waitingCount = queueEntries.filter(
-    item => item.status === "Waiting"
+    entry => entry.status === "Waiting"
   ).length;
 
   const processingCount = queueEntries.filter(
-    item => item.status === "Processing"
+    entry => entry.status === "Processing"
   ).length;
 
-  const unfinishedCount =
+  const pendingCount =
     waitingCount + processingCount;
 
   const hasHistory = queueEntries.some(
-    item =>
-      item.status === "Completed" ||
-      item.status === "Failed" ||
-      item.status === "Cancelled"
+    entry =>
+      entry.status === "Completed" ||
+      entry.status === "Failed" ||
+      entry.status === "Cancelled"
   );
 
   queueCount.textContent =
-    `${unfinishedCount} pending`;
+    `${pendingCount} pending`;
 
   queueStatus.textContent =
     processingCount > 0
@@ -493,23 +603,37 @@ async function playTrack(): Promise<void> {
   try {
     await audioEngine.play();
 
-    if (isDisposed) return;
+    if (isDisposed) {
+      return;
+    }
 
-    // Restart the frequency animation for the current audio source.
+    // Start drawing only when audio is playing
+    isPlaying = true;
+
     visualizer.stop();
-    visualizer.start();
+
+    if (!document.hidden) {
+      visualizer.start();
+    }
 
     stopBtn.disabled = false;
     playBtn.textContent = "↻ Replay";
 
     playerStatus.textContent = "Playing";
-    playerMessage.textContent = "Audio is playing.";
+    playerMessage.textContent =
+      "Audio is playing.";
   } catch (error) {
+    isPlaying = false;
     visualizer.stop();
-    console.error("Playback error:", error);
+
+    console.error(
+      "Playback error:",
+      error
+    );
 
     if (!isDisposed) {
       playerStatus.textContent = "Error";
+
       playerMessage.textContent =
         "Unable to start playback.";
     }
@@ -522,11 +646,15 @@ async function playTrack(): Promise<void> {
   }
 }
 
+// Handle Play
 playBtn.addEventListener("click", () => {
   void playTrack();
 });
 
+// Handle Stop
 stopBtn.addEventListener("click", () => {
+  isPlaying = false;
+
   audioEngine.stop();
   visualizer.stop();
 
@@ -534,62 +662,84 @@ stopBtn.addEventListener("click", () => {
   playBtn.textContent = "▶ Play";
 
   currentTime.textContent = "0:00";
+
   playerStatus.textContent = "Stopped";
-  playerMessage.textContent = "Playback stopped.";
+  playerMessage.textContent =
+    "Playback stopped.";
 });
 
+// Handle natural playback completion
 audioEngine.onEnded = () => {
-  if (isDisposed) return;
+  if (isDisposed) {
+    return;
+  }
 
+  isPlaying = false;
   visualizer.stop();
 
   stopBtn.disabled = true;
   playBtn.textContent = "▶ Play";
 
   playerStatus.textContent = "Finished";
+
   playerMessage.textContent =
     "Playback finished. Press Play to restart.";
 };
+
+// ==================================================
+// 8. PREPARE DECODED TRACK
+// ==================================================
 
 function prepareTrack(
   track: Track,
   buffer: AudioBuffer
 ): void {
-  if (isDisposed) return;
+  if (isDisposed) {
+    return;
+  }
 
-  // Stop rendering bars from the previous track.
+  // Stop the old track and animation
+  isPlaying = false;
   visualizer.stop();
+
   audioEngine.setBuffer(buffer);
 
   currentTitle.textContent = track.title;
   currentArtist.textContent = track.artist;
 
   currentTime.textContent = "0:00";
-  totalTime.textContent = formatTime(buffer.duration);
+  totalTime.textContent =
+    formatTime(buffer.duration);
 
   playBtn.textContent = "▶ Play";
   playBtn.disabled = false;
   stopBtn.disabled = true;
 
   playerStatus.textContent = "Ready";
+
   playerMessage.textContent =
     `${track.title} is ready to play.`;
 }
 
 // ==================================================
-// 8. ADD TRACK TO FIFO QUEUE
+// 9. ADD AUDIO TASK TO FIFO QUEUE
 // ==================================================
 
 function addTrackToQueue(track: Track): void {
-  if (isDisposed) return;
+  if (isDisposed) {
+    return;
+  }
 
-  const cachedBuffer = decodedTracks.get(track.id);
+  // Reuse cached audio when available
+  const cachedBuffer =
+    getCachedTrack(track.id);
 
-  // Cached tracks can be replayed immediately
   if (cachedBuffer) {
     prepareTrack(track, cachedBuffer);
+
     queueMessage.textContent =
       `${track.title} loaded from cache.`;
+
     return;
   }
 
@@ -621,7 +771,6 @@ function addTrackToQueue(track: Track): void {
 
         entry.status = "Cancelled";
 
-        // Do not leave a cancelled task as active
         if (activeEntryId === entry.id) {
           activeEntryId = null;
         }
@@ -632,12 +781,15 @@ function addTrackToQueue(track: Track): void {
         renderQueue();
       },
     })
-    .then(buffer => {
+    .then((buffer: AudioBuffer) => {
       if (isDisposed) return;
 
       entry.status = "Completed";
-      decodedTracks.set(track.id, buffer);
 
+      // Cache decoded audio with memory limit
+      cacheTrack(track.id, buffer);
+
+      // Prepare audio for playback
       prepareTrack(track, buffer);
 
       queueMessage.textContent =
@@ -674,22 +826,27 @@ function addTrackToQueue(track: Track): void {
     });
 }
 
-// Event delegation for Queue buttons
+// Event delegation for Track Library buttons
 const library =
   getElement<HTMLElement>("#library");
 
 library.addEventListener("click", event => {
   const target = event.target;
 
-  if (!(target instanceof Element)) return;
+  if (!(target instanceof Element)) {
+    return;
+  }
 
   const button =
-    target.closest<HTMLButtonElement>(".queue-btn");
+    target.closest<HTMLButtonElement>(
+      ".queue-btn"
+    );
 
   if (!button) return;
 
   const track = tracks.find(
-    item => item.id === button.dataset.trackId
+    item =>
+      item.id === button.dataset.trackId
   );
 
   if (track) {
@@ -698,68 +855,123 @@ library.addEventListener("click", event => {
 });
 
 // ==================================================
-// 9. CANCEL ACTIVE TASK
+// 10. CANCEL ACTIVE TASK
 // ==================================================
 
-cancelActiveBtn.addEventListener("click", () => {
-  const cancelled = audioQueue.cancelActive();
+cancelActiveBtn.addEventListener(
+  "click",
+  () => {
+    const cancelled =
+      audioQueue.cancelActive();
 
-  if (cancelled) {
-    queueMessage.textContent =
-      "Cancelling the active audio task...";
-  }
-
-  renderQueue();
-});
-
-// ==================================================
-// 10. CANCEL ALL WAITING TASKS
-// ==================================================
-
-clearPendingBtn.addEventListener("click", () => {
-  const cancelledCount = audioQueue.clearPending();
-
-  queueMessage.textContent =
-    `${cancelledCount} waiting task(s) cancelled.`;
-
-  renderQueue();
-});
-
-// ==================================================
-// 11. CLEAR FINISHED TASK HISTORY
-// ==================================================
-
-clearHistoryBtn.addEventListener("click", () => {
-  for (let i = queueEntries.length - 1; i >= 0; i--) {
-    const status = queueEntries[i].status;
-
-    if (
-      status === "Completed" ||
-      status === "Failed" ||
-      status === "Cancelled"
-    ) {
-      queueEntries.splice(i, 1);
+    if (cancelled) {
+      queueMessage.textContent =
+        "Cancelling the active audio task...";
     }
+
+    renderQueue();
   }
-
-  queueMessage.textContent =
-    "Finished task history cleared.";
-
-  renderQueue();
-});
+);
 
 // ==================================================
-// 12. RESOURCE CLEANUP
+// 11. CLEAR PENDING TASKS
+// ==================================================
+
+clearPendingBtn.addEventListener(
+  "click",
+  () => {
+    const cancelledCount =
+      audioQueue.clearPending();
+
+    queueMessage.textContent =
+      `${cancelledCount} waiting task(s) cancelled.`;
+
+    renderQueue();
+  }
+);
+
+// ==================================================
+// 12. CLEAR FINISHED HISTORY
+// ==================================================
+
+clearHistoryBtn.addEventListener(
+  "click",
+  () => {
+    for (
+      let i = queueEntries.length - 1;
+      i >= 0;
+      i--
+    ) {
+      const status = queueEntries[i].status;
+
+      if (
+        status === "Completed" ||
+        status === "Failed" ||
+        status === "Cancelled"
+      ) {
+        queueEntries.splice(i, 1);
+      }
+    }
+
+    queueMessage.textContent =
+      "Finished task history cleared.";
+
+    renderQueue();
+  }
+);
+
+// ==================================================
+// 13. BACKGROUND TAB PERFORMANCE
+// ==================================================
+
+// Stop rendering when browser tab is hidden
+function handleVisibilityChange(): void {
+  if (isDisposed) {
+    return;
+  }
+
+  if (document.hidden) {
+    visualizer.stop();
+  } else if (isPlaying) {
+    visualizer.start();
+  }
+}
+
+document.addEventListener(
+  "visibilitychange",
+  handleVisibilityChange
+);
+
+// ==================================================
+// 14. RESOURCE CLEANUP
 // ==================================================
 
 window.addEventListener("pagehide", () => {
-  isDisposed = true;
+  if (isDisposed) {
+    return;
+  }
 
+  isDisposed = true;
+  isPlaying = false;
+
+  // Remove background visibility listener
+  document.removeEventListener(
+    "visibilitychange",
+    handleVisibilityChange
+  );
+
+  // Stop animation and release ResizeObserver
   visualizer.dispose();
+
+  // Cancel pending and active downloads
   audioQueue.dispose();
+
+  // Release decoded audio references
   decodedTracks.clear();
 
+  // Close AudioContext
   void audioEngine.dispose();
 });
 
+// Initial queue render
 renderQueue();

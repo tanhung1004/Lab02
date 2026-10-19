@@ -1,14 +1,21 @@
 
 export class AudioVisualizer {
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
-  private analyser: AnalyserNode;
-  private frequencyData: Uint8Array<ArrayBuffer>;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly analyser: AnalyserNode;
+  private readonly frequencyData: Uint8Array<ArrayBuffer>;
+  private readonly resizeObserver: ResizeObserver;
 
   private frameId: number | null = null;
   private running = false;
   private disposed = false;
-  private resizeObserver: ResizeObserver;
+  private lastDrawTime = 0;
+
+  // Limit visualizer updates to approximately 30 FPS
+  private readonly frameInterval = 1000 / 30;
+
+  // Reuse gradient instead of recreating it every frame
+  private gradient: CanvasGradient | null = null;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -24,12 +31,12 @@ export class AudioVisualizer {
     this.ctx = context;
     this.analyser = analyser;
 
-    // One value for each FFT frequency bin
+    // Create frequency buffer once
     this.frequencyData = new Uint8Array(
       new ArrayBuffer(analyser.frequencyBinCount)
     );
 
-    // Adjust canvas resolution whenever its CSS size changes
+    // Watch canvas size changes
     this.resizeObserver = new ResizeObserver(() => {
       this.resize();
     });
@@ -38,13 +45,17 @@ export class AudioVisualizer {
     this.resize();
   }
 
-  // Match canvas pixels to displayed dimensions
+  // Resize canvas using device pixel ratio
   private resize(): void {
     if (this.disposed) return;
 
     const width = Math.max(1, this.canvas.clientWidth);
     const height = Math.max(1, this.canvas.clientHeight);
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    const dpr = Math.min(
+      window.devicePixelRatio || 1,
+      2
+    );
 
     const pixelWidth = Math.round(width * dpr);
     const pixelHeight = Math.round(height * dpr);
@@ -58,31 +69,55 @@ export class AudioVisualizer {
     }
 
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.drawIdle();
+
+    // Create gradient only when canvas is resized
+    this.gradient = this.ctx.createLinearGradient(
+      0,
+      height,
+      0,
+      0
+    );
+
+    this.gradient.addColorStop(0, "#2563eb");
+    this.gradient.addColorStop(0.5, "#38bdf8");
+    this.gradient.addColorStop(1, "#a5f3fc");
+
+    if (this.running) {
+      this.drawBars();
+    } else {
+      this.drawIdle();
+    }
   }
 
-  // Clear the visualizer panel
+  // Clear canvas
   private clear(): void {
-    const width = this.canvas.clientWidth;
-    const height = this.canvas.clientHeight;
-
-    this.ctx.clearRect(0, 0, width, height);
+    this.ctx.clearRect(
+      0,
+      0,
+      this.canvas.clientWidth,
+      this.canvas.clientHeight
+    );
   }
 
-  // Draw the resting baseline
+  // Draw baseline when music is not playing
   private drawIdle(): void {
-    if (this.running) return;
-
     this.clear();
 
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
 
-    this.ctx.fillStyle = "rgba(148, 163, 184, 0.25)";
-    this.ctx.fillRect(0, height - 4, width, 2);
+    this.ctx.fillStyle =
+      "rgba(148, 163, 184, 0.25)";
+
+    this.ctx.fillRect(
+      0,
+      Math.max(0, height - 4),
+      width,
+      2
+    );
   }
 
-  // Draw frequency bars based on the analyser data
+  // Draw frequency bars from actual audio data
   private drawBars(): void {
     this.clear();
 
@@ -98,7 +133,8 @@ export class AudioVisualizer {
       this.frequencyData.length
     );
 
-    const gap = 4;
+    const gap = 3;
+
     const barWidth = Math.max(
       1,
       (width - gap * (barCount - 1)) / barCount
@@ -106,21 +142,13 @@ export class AudioVisualizer {
 
     const step = Math.max(
       1,
-      Math.floor(this.frequencyData.length / barCount)
+      Math.floor(
+        this.frequencyData.length / barCount
+      )
     );
 
-    const gradient = this.ctx.createLinearGradient(
-      0,
-      height,
-      0,
-      0
-    );
-
-    gradient.addColorStop(0, "#2563eb");
-    gradient.addColorStop(0.5, "#38bdf8");
-    gradient.addColorStop(1, "#a5f3fc");
-
-    this.ctx.fillStyle = gradient;
+    this.ctx.fillStyle =
+      this.gradient ?? "#38bdf8";
 
     for (let i = 0; i < barCount; i++) {
       const value = this.frequencyData[i * step];
@@ -142,11 +170,20 @@ export class AudioVisualizer {
     }
   }
 
-  // Animation loop
-  private animate = (): void => {
-    if (!this.running || this.disposed) return;
+  // Animation loop with frame throttling
+  private animate = (timestamp: number): void => {
+    if (!this.running || this.disposed) {
+      return;
+    }
 
-    this.drawBars();
+    if (
+      timestamp - this.lastDrawTime >=
+      this.frameInterval
+    ) {
+      this.drawBars();
+      this.lastDrawTime = timestamp;
+    }
+
     this.frameId = requestAnimationFrame(
       this.animate
     );
@@ -154,32 +191,41 @@ export class AudioVisualizer {
 
   // Start the visualizer
   start(): void {
-    if (this.disposed || this.running) return;
+    if (this.disposed || this.running) {
+      return;
+    }
 
     this.running = true;
-    this.animate();
+    this.lastDrawTime = -Infinity;
+
+    this.frameId = requestAnimationFrame(
+      this.animate
+    );
   }
 
-  // Stop animation and clear the bars
+  // Stop drawing and cancel animation frame
   stop(): void {
     this.running = false;
 
     if (this.frameId !== null) {
       cancelAnimationFrame(this.frameId);
-      this.frameId = null;
     }
+
+    this.frameId = null;
 
     if (!this.disposed) {
       this.drawIdle();
     }
   }
 
-  // Release browser observers and animation frames
+  // Clean up resources
   dispose(): void {
     if (this.disposed) return;
 
     this.stop();
     this.disposed = true;
+
     this.resizeObserver.disconnect();
+    this.gradient = null;
   }
 }
