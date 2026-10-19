@@ -3,10 +3,13 @@ import "./style.css";
 import { OrderQueue } from "./order-queue";
 import type { OrderRequest, OrderResult } from "./order-queue";
 import { mountRaceConditionTest } from "./race-condition-test";
+import { createAntiDriftTimer } from "./anti-drift-timer";
 
 // ==========================================
-// HW3 - TASK 3.4: CONCURRENT ORDER PROCESSING
+// HW3 - TASK 3.6: ZERO-DRIFT COUNTDOWN TIMER
 // ==========================================
+
+// 1. PRODUCT DATA
 
 interface Product {
   id: number;
@@ -62,6 +65,8 @@ const products: Product[] = [
   },
 ];
 
+// 2. SALE STATE
+
 interface SaleState {
   ordersProcessed: number;
   rejectedOrders: number;
@@ -78,14 +83,13 @@ const saleState: SaleState = {
   isSimulating: false,
 };
 
+// Fixed sale deadline in milliseconds
 const SALE_DURATION_MS = 60 * 60 * 1000;
 const saleEndTime = Date.now() + SALE_DURATION_MS;
 
 let nextOrderId = 1;
 
-// ==========================================
-// HELPER FUNCTIONS
-// ==========================================
+// 3. HELPERS
 
 function formatPrice(value: number): string {
   return new Intl.NumberFormat("vi-VN", {
@@ -96,8 +100,7 @@ function formatPrice(value: number): string {
 
 function discountPercent(product: Product): number {
   return Math.round(
-    ((product.price - product.salePrice) /
-      product.price) * 100
+    ((product.price - product.salePrice) / product.price) * 100
   );
 }
 
@@ -108,26 +111,30 @@ function getTotalStock(): number {
   );
 }
 
-function getRemainingSeconds(): number {
-  return Math.max(
-    0,
-    Math.ceil((saleEndTime - Date.now()) / 1000)
+function getRemainingMs(): number {
+  return Math.max(0, saleEndTime - Date.now());
+}
+
+function formatTime(remainingMs: number): string {
+  const ms = Math.max(0, Math.floor(remainingMs));
+
+  const hours = Math.floor(ms / 3600000);
+  const minutes = Math.floor((ms % 3600000) / 60000);
+  const seconds = Math.floor((ms % 60000) / 1000);
+  const milliseconds = ms % 1000;
+
+  const clock = [hours, minutes, seconds]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
+
+  return (
+    clock +
+    "." +
+    String(milliseconds).padStart(3, "0")
   );
 }
 
-function formatTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remaining = seconds % 60;
-
-  return [hours, minutes, remaining]
-    .map(value => String(value).padStart(2, "0"))
-    .join(":");
-}
-
-// ==========================================
-// RENDER FLASHMART
-// ==========================================
+// 4. RENDER FLASHMART INTERFACE
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -147,15 +154,22 @@ app.innerHTML = `
         <a href="#inventory">Inventory</a>
       </nav>
 
-      <span class="header-badge">FLASH SALE ENGINE</span>
+      <span class="header-badge">
+        FLASH SALE ENGINE
+      </span>
     </header>
 
     <main>
+
+      <!-- HERO -->
       <section class="hero" id="home">
         <div class="hero-content">
           <span class="tag">LIMITED TIME OFFER</span>
 
-          <h1>Big Deals.<br>Small Prices.</h1>
+          <h1>
+            Big Deals.<br>
+            Small Prices.
+          </h1>
 
           <p>
             Experience our flash sale storefront
@@ -172,19 +186,25 @@ app.innerHTML = `
         </div>
       </section>
 
+      <!-- ANTI-DRIFT COUNTDOWN -->
       <section class="sale-banner">
         <div>
           <span class="eyebrow">FLASH SALE EVENT</span>
           <h2>Today's Hot Deals</h2>
-          <p id="sale-status">Limited stock available.</p>
+          <p id="sale-status">
+            Limited stock available.
+          </p>
         </div>
 
         <div class="countdown-box">
-          <span>Sale ends in</span>
-          <strong id="countdown">01:00:00</strong>
+          <span>Precision countdown</span>
+          <strong id="countdown">
+            01:00:00.000
+          </strong>
         </div>
       </section>
 
+      <!-- PRODUCT CARDS -->
       <section class="products-section" id="products">
         <div class="section-heading">
           <div>
@@ -198,7 +218,7 @@ app.innerHTML = `
         </div>
 
         <div class="product-grid">
-          ${products.map(product => `
+          ${products.map((product) => `
             <article
               class="product-card"
               data-product-id="${product.id}"
@@ -266,6 +286,7 @@ app.innerHTML = `
         </p>
       </section>
 
+      <!-- INVENTORY -->
       <section class="inventory-panel" id="inventory">
         <div class="section-heading">
           <div>
@@ -310,12 +331,14 @@ app.innerHTML = `
         </p>
       </section>
 
+      <!-- CONCURRENT ORDER SIMULATOR -->
       <section class="inventory-panel" id="simulation">
         <div class="section-heading">
           <div>
             <span class="eyebrow">
               CONCURRENT ORDER TEST
             </span>
+
             <h2>Order Processing Simulator</h2>
           </div>
 
@@ -363,6 +386,7 @@ app.innerHTML = `
           Press the button to test inventory safety.
         </p>
       </section>
+
     </main>
 
     <footer class="footer">
@@ -371,9 +395,7 @@ app.innerHTML = `
   </div>
 `;
 
-// ==========================================
-// DOM REFERENCES
-// ==========================================
+// 5. DOM REFERENCES
 
 function getElement<T extends Element>(
   selector: string
@@ -432,38 +454,34 @@ const simSuccess =
 const simRejected =
   getElement<HTMLElement>("#sim-rejected");
 
-// ==========================================
-// UPDATE PRODUCT AND INVENTORY UI
-// ==========================================
+// 6. UPDATE PRODUCT UI
 
 function updateProductUI(product: Product): void {
-  const stockElement =
-    getElement<HTMLElement>(
-      `[data-stock-id="${product.id}"]`
-    );
+  const stockElement = getElement<HTMLElement>(
+    `[data-stock-id="${product.id}"]`
+  );
 
-  const stockBar =
-    getElement<HTMLElement>(
-      `[data-bar-id="${product.id}"]`
-    );
+  const stockBar = getElement<HTMLElement>(
+    `[data-bar-id="${product.id}"]`
+  );
 
-  const button =
-    getElement<HTMLButtonElement>(
-      `[data-buy-id="${product.id}"]`
-    );
+  const button = getElement<HTMLButtonElement>(
+    `[data-buy-id="${product.id}"]`
+  );
 
-  stockElement.textContent =
-    `${product.stock} left`;
+  stockElement.textContent = `${product.stock} left`;
 
-  stockBar.style.width =
-    `${(product.stock / product.initialStock) * 100}%`;
+  const percentage =
+    (product.stock / product.initialStock) * 100;
+
+  stockBar.style.width = `${percentage}%`;
 
   button.disabled =
-    saleState.isExpired || product.stock === 0;
+    saleState.isExpired || product.stock <= 0;
 
   button.textContent = saleState.isExpired
     ? "Sale Ended"
-    : product.stock === 0
+    : product.stock <= 0
       ? "Sold Out"
       : "Buy Now";
 }
@@ -484,9 +502,7 @@ function updateInventoryUI(): void {
   products.forEach(updateProductUI);
 }
 
-// ==========================================
-// FLASH SALE EXPIRATION
-// ==========================================
+// 7. SALE EXPIRATION
 
 function endSale(): void {
   if (saleState.isExpired) return;
@@ -500,25 +516,20 @@ function endSale(): void {
     "Sale Ended";
 
   countdownElement.textContent =
-    "00:00:00";
+    "00:00:00.000";
 
   simulateButton.disabled = true;
+
   updateInventoryUI();
 }
 
-// ==========================================
-// PROCESS ONE ORDER
-// ==========================================
-
-// IMPORTANT:
-// Inventory validation and decrement are synchronous.
-// There is no await between checking stock and reducing it.
+// 8. SAFE ORDER PROCESSING
 
 function processOrder(
   request: OrderRequest
 ): OrderResult {
   const product = products.find(
-    item => item.id === request.productId
+    (item) => item.id === request.productId
   );
 
   if (!product) {
@@ -532,7 +543,8 @@ function processOrder(
     };
   }
 
-  if (getRemainingSeconds() <= 0) {
+  // Validate against actual deadline, not UI timer
+  if (getRemainingMs() <= 0) {
     endSale();
     saleState.rejectedOrders++;
 
@@ -569,8 +581,9 @@ function processOrder(
     };
   }
 
-  // Single synchronous inventory update
+  // No await between stock check and decrement
   product.stock -= request.quantity;
+
   saleState.ordersProcessed++;
   saleState.revenue +=
     product.salePrice * request.quantity;
@@ -585,11 +598,9 @@ function processOrder(
 
 const orderQueue = new OrderQueue(processOrder);
 
-// ==========================================
-// SINGLE CUSTOMER PURCHASE
-// ==========================================
+// 9. SINGLE CUSTOMER PURCHASE
 
-productSection.addEventListener("click", event => {
+productSection.addEventListener("click", (event) => {
   const target = event.target;
 
   if (!(target instanceof Element)) return;
@@ -603,7 +614,6 @@ productSection.addEventListener("click", event => {
 
   if (!Number.isInteger(productId)) return;
 
-  // All orders share the same FIFO queue
   const request: OrderRequest = {
     id: nextOrderId++,
     productId,
@@ -611,11 +621,13 @@ productSection.addEventListener("click", event => {
   };
 
   button.disabled = true;
+
   orderMessageElement.textContent =
     "Processing your order...";
 
-  void orderQueue.enqueue(request)
-    .then(result => {
+  void orderQueue
+    .enqueue(request)
+    .then((result) => {
       orderMessageElement.textContent =
         result.success
           ? "Order successful! Inventory updated."
@@ -623,8 +635,9 @@ productSection.addEventListener("click", event => {
 
       updateInventoryUI();
     })
-    .catch(error => {
+    .catch((error: unknown) => {
       console.error("Order processing failed:", error);
+
       orderMessageElement.textContent =
         "An unexpected order error occurred.";
     })
@@ -633,9 +646,7 @@ productSection.addEventListener("click", event => {
     });
 });
 
-// ==========================================
-// CONCURRENT ORDER SIMULATION
-// ==========================================
+// 10. CONCURRENT ORDER SIMULATION
 
 simulateButton.addEventListener("click", async () => {
   if (saleState.isSimulating || saleState.isExpired) {
@@ -646,6 +657,7 @@ simulateButton.addEventListener("click", async () => {
   simulateButton.disabled = true;
 
   simulationStatus.textContent = "Processing";
+
   simulationMessage.textContent =
     "Submitting 10 concurrent order requests...";
 
@@ -654,27 +666,23 @@ simulateButton.addEventListener("click", async () => {
   simRejected.textContent = "0";
 
   try {
-    // Use Bluetooth Speaker, initially 6 units
-    const productId = 4;
-
     const requests: OrderRequest[] = Array.from(
       { length: 10 },
       () => ({
         id: nextOrderId++,
-        productId,
+        productId: 4,
         quantity: 1,
       })
     );
 
-    // Submit all requests without awaiting individually
     const results = await Promise.all(
-      requests.map(request =>
+      requests.map((request) =>
         orderQueue.enqueue(request)
       )
     );
 
     const successful = results.filter(
-      result => result.success
+      (result) => result.success
     ).length;
 
     const rejected = results.length - successful;
@@ -686,15 +694,16 @@ simulateButton.addEventListener("click", async () => {
 
     simulationMessage.textContent =
       `${successful} successful, ${rejected} rejected. ` +
-      `No negative stock allowed.`;
+      "No negative stock allowed.";
 
     updateInventoryUI();
-
     console.table(results);
   } catch (error) {
     simulationStatus.textContent = "Error";
+
     simulationMessage.textContent =
       "Simulation failed. Check Console.";
+
     console.error("Simulation error:", error);
   } finally {
     saleState.isSimulating = false;
@@ -702,48 +711,33 @@ simulateButton.addEventListener("click", async () => {
   }
 });
 
-// ==========================================
-// DRIFT-RESISTANT COUNTDOWN
-// ==========================================
-
-function updateCountdown(): void {
-  const remaining = getRemainingSeconds();
-
-  if (remaining <= 0) {
-    endSale();
-    return;
-  }
-
-  countdownElement.textContent = formatTime(remaining);
-}
+// 11. ZERO-DRIFT COUNTDOWN TIMER
 
 updateInventoryUI();
-updateCountdown();
 
-const intervalId = window.setInterval(() => {
-  updateCountdown();
+// Both the countdown and order validation share
+// the same absolute sale deadline.
+const remainingDurationMs = getRemainingMs();
 
-  if (saleState.isExpired) {
-    window.clearInterval(intervalId);
+const stopTimer = createAntiDriftTimer(
+  remainingDurationMs,
+  (remainingMs: number) => {
+    if (remainingMs <= 0) {
+      endSale();
+      return;
+    }
+
+    countdownElement.textContent =
+      formatTime(remainingMs);
   }
-}, 1000);
-
-document.addEventListener(
-  "visibilitychange",
-  updateCountdown
 );
 
-// ==========================================
-// CLEANUP
-// ==========================================
+// 12. RACE CONDITION TEST - TASK 3.5
+
+mountRaceConditionTest();
+
+// 13. CLEANUP
 
 window.addEventListener("pagehide", () => {
-  window.clearInterval(intervalId);
-
-  document.removeEventListener(
-    "visibilitychange",
-    updateCountdown
-  );
+  stopTimer();
 });
-// TASK 3.5 - Mount race condition comparison
-mountRaceConditionTest();
