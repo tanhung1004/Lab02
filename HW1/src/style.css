@@ -309,3 +309,10 @@ select:focus-visible {
     padding: 13px 10px;
   }
 }
+
+
+/* Out of Stock Status */
+.out-of-stock {
+  background: #fde8e8;
+  color: #a12626;
+}
