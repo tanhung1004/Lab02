@@ -1,5 +1,7 @@
 
 import { products, productColumns } from "./data/products";
+import type { Product } from "./types/data-grid-contract";
+import DataGrid from "./components/DataGrid";
 
 export default function App() {
   return (
@@ -91,60 +93,13 @@ export default function App() {
           </div>
 
           {/* Data Table */}
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  {productColumns.map((column) => (
-                    <th
-                      key={String(column.accessorKey)}
-                      scope="col"
-                    >
-                      {column.header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-
-              <tbody>
-                {products.map((product) => (
-                  <tr key={product.id}>
-                    <td>{product.id}</td>
-
-                    <td className="product-name">
-                      {product.name}
-                    </td>
-
-                    <td>
-                      <span className="category-badge">
-                        {product.category}
-                      </span>
-                    </td>
-
-                    <td>
-                      ${product.price.toFixed(2)}
-                    </td>
-
-                    <td>{product.stock}</td>
-
-                    <td>
-                      <span
-                        className={`status ${
-                          product.status === "Out of Stock"
-                            ? "out-of-stock"
-                            : product.status === "Low Stock"
-                            ? "low-stock"
-                            : "in-stock"
-                        }`}
-                      >
-                        {product.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          
+{/* Reusable Data-Grid Component */}
+<DataGrid<Product>
+  data={products}
+  columns={productColumns}
+  ariaLabel="Furniture products data grid"
+/>
 
           {/* Pagination: Task 1.6 */}
           <div className="table-footer">
