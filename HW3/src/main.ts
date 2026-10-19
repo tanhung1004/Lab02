@@ -1,11 +1,11 @@
 
 import "./style.css";
+import { OrderQueue } from "./order-queue";
+import type { OrderRequest, OrderResult } from "./order-queue";
 
 // ==========================================
-// HW3 - TASK 3.3: FLASH SALE LOGIC
+// HW3 - TASK 3.4: CONCURRENT ORDER PROCESSING
 // ==========================================
-
-// 1. PRODUCT DATA
 
 interface Product {
   id: number;
@@ -61,40 +61,42 @@ const products: Product[] = [
   },
 ];
 
-// 2. FLASH SALE STATE
-
 interface SaleState {
   ordersProcessed: number;
+  rejectedOrders: number;
   revenue: number;
-  isProcessing: boolean;
   isExpired: boolean;
+  isSimulating: boolean;
 }
 
 const saleState: SaleState = {
   ordersProcessed: 0,
+  rejectedOrders: 0,
   revenue: 0,
-  isProcessing: false,
   isExpired: false,
+  isSimulating: false,
 };
 
-// Countdown lasts 60 minutes from page load
-const SALE_DURATION = 60 * 60 * 1000;
-const saleEndTime = Date.now() + SALE_DURATION;
+const SALE_DURATION_MS = 60 * 60 * 1000;
+const saleEndTime = Date.now() + SALE_DURATION_MS;
 
-// 3. HELPER FUNCTIONS
+let nextOrderId = 1;
 
-function formatPrice(price: number): string {
+// ==========================================
+// HELPER FUNCTIONS
+// ==========================================
+
+function formatPrice(value: number): string {
   return new Intl.NumberFormat("vi-VN", {
     style: "currency",
     currency: "VND",
-  }).format(price);
+  }).format(value);
 }
 
 function discountPercent(product: Product): number {
   return Math.round(
     ((product.price - product.salePrice) /
-      product.price) *
-      100
+      product.price) * 100
   );
 }
 
@@ -118,11 +120,13 @@ function formatTime(seconds: number): string {
   const remaining = seconds % 60;
 
   return [hours, minutes, remaining]
-    .map((value) => String(value).padStart(2, "0"))
+    .map(value => String(value).padStart(2, "0"))
     .join(":");
 }
 
-// 4. APPLICATION ROOT
+// ==========================================
+// RENDER FLASHMART
+// ==========================================
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -130,16 +134,11 @@ if (!app) {
   throw new Error("App root #app not found");
 }
 
-// 5. RENDER FLASHMART INTERFACE
-
 app.innerHTML = `
   <div class="app-shell">
 
-    <!-- NAVIGATION -->
     <header class="header">
-      <a class="logo" href="#home">
-        ⚡ FlashMart
-      </a>
+      <a class="logo" href="#home">⚡ FlashMart</a>
 
       <nav aria-label="Main navigation">
         <a href="#home">Home</a>
@@ -147,22 +146,15 @@ app.innerHTML = `
         <a href="#inventory">Inventory</a>
       </nav>
 
-      <span class="header-badge">
-        FLASH SALE ENGINE
-      </span>
+      <span class="header-badge">FLASH SALE ENGINE</span>
     </header>
 
     <main>
-
-      <!-- HERO BANNER -->
       <section class="hero" id="home">
         <div class="hero-content">
           <span class="tag">LIMITED TIME OFFER</span>
 
-          <h1>
-            Big Deals.<br>
-            Small Prices.
-          </h1>
+          <h1>Big Deals.<br>Small Prices.</h1>
 
           <p>
             Experience our flash sale storefront
@@ -179,15 +171,11 @@ app.innerHTML = `
         </div>
       </section>
 
-      <!-- FLASH SALE COUNTDOWN -->
       <section class="sale-banner">
         <div>
           <span class="eyebrow">FLASH SALE EVENT</span>
           <h2>Today's Hot Deals</h2>
-
-          <p id="sale-status">
-            Limited stock available.
-          </p>
+          <p id="sale-status">Limited stock available.</p>
         </div>
 
         <div class="countdown-box">
@@ -196,9 +184,7 @@ app.innerHTML = `
         </div>
       </section>
 
-      <!-- PRODUCT CARDS -->
       <section class="products-section" id="products">
-
         <div class="section-heading">
           <div>
             <span class="eyebrow">EXCLUSIVE OFFERS</span>
@@ -211,14 +197,12 @@ app.innerHTML = `
         </div>
 
         <div class="product-grid">
-
-          ${products.map((product) => `
+          ${products.map(product => `
             <article
               class="product-card"
               data-product-id="${product.id}"
             >
               <div class="product-image">
-
                 <span class="discount-badge">
                   -${discountPercent(product)}%
                 </span>
@@ -246,10 +230,7 @@ app.innerHTML = `
                 <div class="stock-info">
                   <span>Available stock</span>
 
-                  <strong
-                    class="stock-value"
-                    data-stock-id="${product.id}"
-                  >
+                  <strong data-stock-id="${product.id}">
                     ${product.stock} left
                   </strong>
                 </div>
@@ -272,7 +253,6 @@ app.innerHTML = `
               </div>
             </article>
           `).join("")}
-
         </div>
 
         <p
@@ -283,12 +263,9 @@ app.innerHTML = `
         >
           Choose a product to place a demo order.
         </p>
-
       </section>
 
-      <!-- INVENTORY MONITORING -->
       <section class="inventory-panel" id="inventory">
-
         <div class="section-heading">
           <div>
             <span class="eyebrow">INVENTORY OVERVIEW</span>
@@ -301,7 +278,6 @@ app.innerHTML = `
         </div>
 
         <div class="inventory-grid">
-
           <div class="stat-card">
             <span>Total Products</span>
             <strong>${products.length}</strong>
@@ -318,7 +294,6 @@ app.innerHTML = `
             <span>Orders Processed</span>
             <strong id="orders-processed">0</strong>
           </div>
-
         </div>
 
         <p class="info-note">
@@ -329,23 +304,75 @@ app.innerHTML = `
         </p>
 
         <p class="info-note">
-          This is a frontend simulation.
-          Real multi-user inventory requires
-          server-side transaction control.
+          Rejected orders:
+          <strong id="rejected-orders">0</strong>
         </p>
-
       </section>
 
+      <section class="inventory-panel" id="simulation">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">
+              CONCURRENT ORDER TEST
+            </span>
+            <h2>Order Processing Simulator</h2>
+          </div>
+
+          <span class="status" id="simulation-status">
+            Ready
+          </span>
+        </div>
+
+        <p class="info-note">
+          Simulate 10 order requests for Bluetooth Speaker.
+          Inventory is checked before accepting each order.
+        </p>
+
+        <button
+          type="button"
+          id="simulate-btn"
+          class="simulate-button"
+        >
+          ⚡ Simulate 10 Orders
+        </button>
+
+        <div class="simulation-results">
+          <div class="stat-card">
+            <span>Requests</span>
+            <strong id="sim-total">0</strong>
+          </div>
+
+          <div class="stat-card">
+            <span>Successful</span>
+            <strong id="sim-success">0</strong>
+          </div>
+
+          <div class="stat-card">
+            <span>Rejected</span>
+            <strong id="sim-rejected">0</strong>
+          </div>
+        </div>
+
+        <p
+          class="info-note"
+          id="simulation-message"
+          role="status"
+          aria-live="polite"
+        >
+          Press the button to test inventory safety.
+        </p>
+      </section>
     </main>
 
     <footer class="footer">
       FlashMart · TypeScript + Vite · HW3
     </footer>
-
   </div>
 `;
 
-// 6. REQUIRED DOM ELEMENTS
+// ==========================================
+// DOM REFERENCES
+// ==========================================
 
 function getElement<T extends Element>(
   selector: string
@@ -377,13 +404,36 @@ const ordersProcessedElement =
 const totalRevenueElement =
   getElement<HTMLElement>("#total-revenue");
 
+const rejectedOrdersElement =
+  getElement<HTMLElement>("#rejected-orders");
+
 const orderMessageElement =
   getElement<HTMLElement>("#order-message");
 
 const productSection =
   getElement<HTMLElement>("#products");
 
-// 7. UPDATE PRODUCT CARD
+const simulateButton =
+  getElement<HTMLButtonElement>("#simulate-btn");
+
+const simulationStatus =
+  getElement<HTMLElement>("#simulation-status");
+
+const simulationMessage =
+  getElement<HTMLElement>("#simulation-message");
+
+const simTotal =
+  getElement<HTMLElement>("#sim-total");
+
+const simSuccess =
+  getElement<HTMLElement>("#sim-success");
+
+const simRejected =
+  getElement<HTMLElement>("#sim-rejected");
+
+// ==========================================
+// UPDATE PRODUCT AND INVENTORY UI
+// ==========================================
 
 function updateProductUI(product: Product): void {
   const stockElement =
@@ -396,7 +446,7 @@ function updateProductUI(product: Product): void {
       `[data-bar-id="${product.id}"]`
     );
 
-  const buyButton =
+  const button =
     getElement<HTMLButtonElement>(
       `[data-buy-id="${product.id}"]`
     );
@@ -404,24 +454,18 @@ function updateProductUI(product: Product): void {
   stockElement.textContent =
     `${product.stock} left`;
 
-  const percentage =
-    (product.stock / product.initialStock) * 100;
+  stockBar.style.width =
+    `${(product.stock / product.initialStock) * 100}%`;
 
-  stockBar.style.width = `${percentage}%`;
+  button.disabled =
+    saleState.isExpired || product.stock === 0;
 
-  if (saleState.isExpired) {
-    buyButton.disabled = true;
-    buyButton.textContent = "Sale Ended";
-  } else if (product.stock <= 0) {
-    buyButton.disabled = true;
-    buyButton.textContent = "Sold Out";
-  } else {
-    buyButton.disabled = saleState.isProcessing;
-    buyButton.textContent = "Buy Now";
-  }
+  button.textContent = saleState.isExpired
+    ? "Sale Ended"
+    : product.stock === 0
+      ? "Sold Out"
+      : "Buy Now";
 }
-
-// 8. UPDATE INVENTORY DASHBOARD
 
 function updateInventoryUI(): void {
   totalStockElement.textContent =
@@ -430,105 +474,21 @@ function updateInventoryUI(): void {
   ordersProcessedElement.textContent =
     String(saleState.ordersProcessed);
 
+  rejectedOrdersElement.textContent =
+    String(saleState.rejectedOrders);
+
   totalRevenueElement.textContent =
     formatPrice(saleState.revenue);
 
-  for (const product of products) {
-    updateProductUI(product);
-  }
+  products.forEach(updateProductUI);
 }
 
-// 9. PROCESS A DEMO ORDER
-
-function buyProduct(productId: number): void {
-  if (saleState.isProcessing) {
-    return;
-  }
-
-  saleState.isProcessing = true;
-
-  try {
-    const product = products.find(
-      (item) => item.id === productId
-    );
-
-    if (!product) {
-      orderMessageElement.textContent =
-        "Product not found.";
-      return;
-    }
-
-    // Always check the real deadline
-    if (getRemainingSeconds() <= 0) {
-      endSale();
-
-      orderMessageElement.textContent =
-        "Flash Sale has ended.";
-      return;
-    }
-
-    // Prevent negative inventory
-    if (product.stock <= 0) {
-      orderMessageElement.textContent =
-        `${product.name} is sold out.`;
-      return;
-    }
-
-    // Process one successful order
-    product.stock -= 1;
-
-    saleState.ordersProcessed += 1;
-    saleState.revenue += product.salePrice;
-
-    orderMessageElement.textContent =
-      `Order successful! Purchased ${product.name} ` +
-      `for ${formatPrice(product.salePrice)}.`;
-
-    console.log("Order processed:", {
-      productId: product.id,
-      productName: product.name,
-      remainingStock: product.stock,
-      totalOrders: saleState.ordersProcessed,
-    });
-  } finally {
-    saleState.isProcessing = false;
-    updateInventoryUI();
-  }
-}
-
-// 10. EVENT DELEGATION FOR BUY BUTTONS
-
-productSection.addEventListener("click", (event) => {
-  const target = event.target;
-
-  if (!(target instanceof Element)) {
-    return;
-  }
-
-  const button =
-    target.closest<HTMLButtonElement>(
-      ".buy-button"
-    );
-
-  if (!button || button.disabled) {
-    return;
-  }
-
-  const productId = Number(button.dataset.buyId);
-
-  if (!Number.isInteger(productId)) {
-    return;
-  }
-
-  buyProduct(productId);
-});
-
-// 11. END FLASH SALE
+// ==========================================
+// FLASH SALE EXPIRATION
+// ==========================================
 
 function endSale(): void {
-  if (saleState.isExpired) {
-    return;
-  }
+  if (saleState.isExpired) return;
 
   saleState.isExpired = true;
 
@@ -541,44 +501,243 @@ function endSale(): void {
   countdownElement.textContent =
     "00:00:00";
 
+  simulateButton.disabled = true;
   updateInventoryUI();
 }
 
-// 12. DRIFT-RESISTANT COUNTDOWN
+// ==========================================
+// PROCESS ONE ORDER
+// ==========================================
+
+// IMPORTANT:
+// Inventory validation and decrement are synchronous.
+// There is no await between checking stock and reducing it.
+
+function processOrder(
+  request: OrderRequest
+): OrderResult {
+  const product = products.find(
+    item => item.id === request.productId
+  );
+
+  if (!product) {
+    saleState.rejectedOrders++;
+
+    return {
+      orderId: request.id,
+      productId: request.productId,
+      success: false,
+      reason: "Product not found",
+    };
+  }
+
+  if (getRemainingSeconds() <= 0) {
+    endSale();
+    saleState.rejectedOrders++;
+
+    return {
+      orderId: request.id,
+      productId: product.id,
+      success: false,
+      reason: "Flash Sale ended",
+    };
+  }
+
+  if (
+    !Number.isInteger(request.quantity) ||
+    request.quantity <= 0
+  ) {
+    saleState.rejectedOrders++;
+
+    return {
+      orderId: request.id,
+      productId: product.id,
+      success: false,
+      reason: "Invalid quantity",
+    };
+  }
+
+  if (product.stock < request.quantity) {
+    saleState.rejectedOrders++;
+
+    return {
+      orderId: request.id,
+      productId: product.id,
+      success: false,
+      reason: "Insufficient stock",
+    };
+  }
+
+  // Single synchronous inventory update
+  product.stock -= request.quantity;
+  saleState.ordersProcessed++;
+  saleState.revenue +=
+    product.salePrice * request.quantity;
+
+  return {
+    orderId: request.id,
+    productId: product.id,
+    success: true,
+    reason: "Order successful",
+  };
+}
+
+const orderQueue = new OrderQueue(processOrder);
+
+// ==========================================
+// SINGLE CUSTOMER PURCHASE
+// ==========================================
+
+productSection.addEventListener("click", event => {
+  const target = event.target;
+
+  if (!(target instanceof Element)) return;
+
+  const button =
+    target.closest<HTMLButtonElement>(".buy-button");
+
+  if (!button || button.disabled) return;
+
+  const productId = Number(button.dataset.buyId);
+
+  if (!Number.isInteger(productId)) return;
+
+  // All orders share the same FIFO queue
+  const request: OrderRequest = {
+    id: nextOrderId++,
+    productId,
+    quantity: 1,
+  };
+
+  button.disabled = true;
+  orderMessageElement.textContent =
+    "Processing your order...";
+
+  void orderQueue.enqueue(request)
+    .then(result => {
+      orderMessageElement.textContent =
+        result.success
+          ? "Order successful! Inventory updated."
+          : `Order rejected: ${result.reason}`;
+
+      updateInventoryUI();
+    })
+    .catch(error => {
+      console.error("Order processing failed:", error);
+      orderMessageElement.textContent =
+        "An unexpected order error occurred.";
+    })
+    .finally(() => {
+      updateInventoryUI();
+    });
+});
+
+// ==========================================
+// CONCURRENT ORDER SIMULATION
+// ==========================================
+
+simulateButton.addEventListener("click", async () => {
+  if (saleState.isSimulating || saleState.isExpired) {
+    return;
+  }
+
+  saleState.isSimulating = true;
+  simulateButton.disabled = true;
+
+  simulationStatus.textContent = "Processing";
+  simulationMessage.textContent =
+    "Submitting 10 concurrent order requests...";
+
+  simTotal.textContent = "10";
+  simSuccess.textContent = "0";
+  simRejected.textContent = "0";
+
+  try {
+    // Use Bluetooth Speaker, initially 6 units
+    const productId = 4;
+
+    const requests: OrderRequest[] = Array.from(
+      { length: 10 },
+      () => ({
+        id: nextOrderId++,
+        productId,
+        quantity: 1,
+      })
+    );
+
+    // Submit all requests without awaiting individually
+    const results = await Promise.all(
+      requests.map(request =>
+        orderQueue.enqueue(request)
+      )
+    );
+
+    const successful = results.filter(
+      result => result.success
+    ).length;
+
+    const rejected = results.length - successful;
+
+    simSuccess.textContent = String(successful);
+    simRejected.textContent = String(rejected);
+
+    simulationStatus.textContent = "Completed";
+
+    simulationMessage.textContent =
+      `${successful} successful, ${rejected} rejected. ` +
+      `No negative stock allowed.`;
+
+    updateInventoryUI();
+
+    console.table(results);
+  } catch (error) {
+    simulationStatus.textContent = "Error";
+    simulationMessage.textContent =
+      "Simulation failed. Check Console.";
+    console.error("Simulation error:", error);
+  } finally {
+    saleState.isSimulating = false;
+    simulateButton.disabled = saleState.isExpired;
+  }
+});
+
+// ==========================================
+// DRIFT-RESISTANT COUNTDOWN
+// ==========================================
 
 function updateCountdown(): void {
-  const remainingSeconds = getRemainingSeconds();
+  const remaining = getRemainingSeconds();
 
-  if (remainingSeconds <= 0) {
+  if (remaining <= 0) {
     endSale();
     return;
   }
 
-  countdownElement.textContent =
-    formatTime(remainingSeconds);
+  countdownElement.textContent = formatTime(remaining);
 }
 
 updateInventoryUI();
 updateCountdown();
 
-const countdownInterval = window.setInterval(() => {
+const intervalId = window.setInterval(() => {
   updateCountdown();
 
   if (saleState.isExpired) {
-    window.clearInterval(countdownInterval);
+    window.clearInterval(intervalId);
   }
 }, 1000);
 
-// Recalculate countdown when returning to the tab
 document.addEventListener(
   "visibilitychange",
   updateCountdown
 );
 
-// 13. CLEAN UP
+// ==========================================
+// CLEANUP
+// ==========================================
 
 window.addEventListener("pagehide", () => {
-  window.clearInterval(countdownInterval);
+  window.clearInterval(intervalId);
 
   document.removeEventListener(
     "visibilitychange",

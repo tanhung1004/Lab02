@@ -496,3 +496,46 @@ a:focus-visible {
     transition: none;
   }
 }
+
+/* TASK 3.4 - ORDER PROCESSING SIMULATOR */
+
+.simulate-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 20px;
+  padding: 13px 24px;
+  border: 0;
+  border-radius: 12px;
+  background: #ea580c;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.simulate-button:hover:not(:disabled) {
+  background: #c2410c;
+}
+
+.simulate-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.simulation-results {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 22px;
+}
+
+@media (max-width: 600px) {
+  .simulation-results {
+    grid-template-columns: 1fr;
+  }
+
+  .simulate-button {
+    width: 100%;
+  }
+}
