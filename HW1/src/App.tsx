@@ -47,12 +47,15 @@ export default function App() {
 
           </div>
 
+
+
           {/* Furniture Hero Image */}
-          <div
-            className="hero-image"
-            role="img"
-            aria-label="Modern furniture showroom"
-          />
+          <div className="hero-image">
+  <img
+    src="https://images.unsplash.com/photo-1600210492486-724fe5c67fb0"
+    alt="Modern living room interior"
+  />
+</div>
         </section>
 
         {/* Furniture Products Section */}
