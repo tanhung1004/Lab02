@@ -9,16 +9,34 @@ export default function DataGrid<T extends object>({
   columns,
   ariaLabel,
 }: DataGridProps<T>) {
-  // Store the current sorting configuration
+  // Sorting state
   const [sortKey, setSortKey] = useState<keyof T | null>(null);
   const [sortDirection, setSortDirection] =
     useState<"asc" | "desc">("asc");
 
-  // Handle sorting when clicking a column header
+  // Filtering and pagination state
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("All");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+
+  // Identify categories from the provided data
+  const categories = useMemo(() => {
+    return Array.from(
+      new Set(
+        data.map((item) => {
+          const record = item as Record<string, unknown>;
+          return String(record.category ?? "");
+        })
+      )
+    ).filter(Boolean).sort();
+  }, [data]);
+
+  // Handle sorting
   const handleSort = (key: keyof T) => {
     if (sortKey === key) {
-      setSortDirection((previous) =>
-        previous === "asc" ? "desc" : "asc"
+      setSortDirection((prev) =>
+        prev === "asc" ? "desc" : "asc"
       );
     } else {
       setSortKey(key);
@@ -26,17 +44,31 @@ export default function DataGrid<T extends object>({
     }
   };
 
-  // Create a sorted copy without modifying original data
-  const sortedData = useMemo(() => {
-    if (sortKey === null) {
-      return data;
-    }
+  // Apply filtering, then sorting
+  const processedData = useMemo(() => {
+    const filtered = data.filter((item) => {
+      const record = item as Record<string, unknown>;
 
-    return [...data].sort((a, b) => {
+      const name = String(record.name ?? "").toLowerCase();
+      const id = String(record.id ?? "").toLowerCase();
+      const itemCategory = String(record.category ?? "");
+
+      const matchesSearch =
+        name.includes(search.trim().toLowerCase()) ||
+        id.includes(search.trim().toLowerCase());
+
+      const matchesCategory =
+        category === "All" || itemCategory === category;
+
+      return matchesSearch && matchesCategory;
+    });
+
+    if (sortKey === null) return filtered;
+
+    return [...filtered].sort((a, b) => {
       const valueA = a[sortKey];
       const valueB = b[sortKey];
 
-      // Sort numbers numerically
       if (
         typeof valueA === "number" &&
         typeof valueB === "number"
@@ -46,20 +78,40 @@ export default function DataGrid<T extends object>({
           : valueB - valueA;
       }
 
-      // Sort text alphabetically
-      const comparison = String(valueA ?? "").localeCompare(
+      const result = String(valueA ?? "").localeCompare(
         String(valueB ?? ""),
         undefined,
         { numeric: true, sensitivity: "base" }
       );
 
-      return sortDirection === "asc"
-        ? comparison
-        : -comparison;
+      return sortDirection === "asc" ? result : -result;
     });
-  }, [data, sortKey, sortDirection]);
+  }, [data, search, category, sortKey, sortDirection]);
 
-  // Render formatted cell content
+  // Pagination
+  const totalPages = Math.max(
+    1,
+    Math.ceil(processedData.length / pageSize)
+  );
+
+  const currentPage = Math.min(page, totalPages);
+
+  const pageData = processedData.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  );
+
+  const startIndex =
+    processedData.length === 0
+      ? 0
+      : (currentPage - 1) * pageSize + 1;
+
+  const endIndex = Math.min(
+    currentPage * pageSize,
+    processedData.length
+  );
+
+  // Format cell content
   const renderCell = (item: T, key: keyof T) => {
     const value = item[key];
 
@@ -94,71 +146,158 @@ export default function DataGrid<T extends object>({
   };
 
   return (
-    <div className="table-wrapper">
-      <table aria-label={ariaLabel}>
-        <thead>
-          <tr>
-            {columns.map((column) => {
-              const isSorted = sortKey === column.accessorKey;
+    <>
+      {/* Search and category filters */}
+      <div className="toolbar">
+        <input
+          type="search"
+          placeholder="Search products..."
+          aria-label="Search products"
+          value={search}
+          onChange={(event) => {
+            setSearch(event.target.value);
+            setPage(1);
+          }}
+        />
 
-              return (
-                <th
-                  key={String(column.accessorKey)}
-                  scope="col"
-                  aria-sort={
-                    isSorted
-                      ? sortDirection === "asc"
-                        ? "ascending"
-                        : "descending"
-                      : undefined
-                  }
-                >
-                  {column.sortable ? (
-                    <button
-                      type="button"
-                      className="sort-button"
-                      onClick={() =>
-                        handleSort(column.accessorKey)
+        <select
+          aria-label="Filter by category"
+          value={category}
+          onChange={(event) => {
+            setCategory(event.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="All">All Categories</option>
+          {categories.map((item) => (
+            <option key={item} value={item}>
+              {item}
+            </option>
+          ))}
+        </select>
+
+        <select
+          aria-label="Rows per page"
+          value={pageSize}
+          onChange={(event) => {
+            setPageSize(Number(event.target.value));
+            setPage(1);
+          }}
+        >
+          <option value={5}>5 rows per page</option>
+          <option value={10}>10 rows per page</option>
+          <option value={20}>20 rows per page</option>
+        </select>
+      </div>
+
+      {/* Data Grid */}
+      <div className="table-wrapper">
+        <table aria-label={ariaLabel}>
+          <thead>
+            <tr>
+              {columns.map((column) => {
+                const isSorted =
+                  sortKey === column.accessorKey;
+
+                return (
+                  <th
+                    key={String(column.accessorKey)}
+                    scope="col"
+                    aria-sort={
+                      isSorted
+                        ? sortDirection === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : undefined
+                    }
+                  >
+                    {column.sortable ? (
+                      <button
+                        type="button"
+                        className="sort-button"
+                        onClick={() =>
+                          handleSort(column.accessorKey)
+                        }
+                      >
+                        {column.header}
+                        <span aria-hidden="true">
+                          {isSorted
+                            ? sortDirection === "asc"
+                              ? " ↑"
+                              : " ↓"
+                            : " ↕"}
+                        </span>
+                      </button>
+                    ) : (
+                      column.header
+                    )}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+
+          <tbody>
+            {pageData.length > 0 ? (
+              pageData.map((item, rowIndex) => (
+                <tr key={(currentPage - 1) * pageSize + rowIndex}>
+                  {columns.map((column) => (
+                    <td
+                      key={String(column.accessorKey)}
+                      className={
+                        column.accessorKey === "name"
+                          ? "product-name"
+                          : ""
                       }
                     >
-                      {column.header}
-
-                      <span aria-hidden="true">
-                        {isSorted
-                          ? sortDirection === "asc"
-                            ? " ↑"
-                            : " ↓"
-                          : " ↕"}
-                      </span>
-                    </button>
-                  ) : (
-                    column.header
-                  )}
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-
-        <tbody>
-          {sortedData.map((item, rowIndex) => (
-            <tr key={rowIndex}>
-              {columns.map((column) => (
-                <td
-                  key={String(column.accessorKey)}
-                  className={
-                    column.accessorKey === "name"
-                      ? "product-name"
-                      : ""
-                  }
-                >
-                  {renderCell(item, column.accessorKey)}
+                      {renderCell(item, column.accessorKey)}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={columns.length}>
+                  No matching products found.
                 </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      <div className="table-footer">
+        <span>
+          Showing {startIndex}–{endIndex} of{" "}
+          {processedData.length} products
+        </span>
+
+        <nav
+          className="pagination"
+          aria-label="Table pagination"
+        >
+          <button
+            type="button"
+            disabled={currentPage === 1}
+            onClick={() => setPage(currentPage - 1)}
+          >
+            Previous
+          </button>
+
+          <span aria-live="polite">
+            Page {currentPage} of {totalPages}
+          </span>
+
+          <button
+            type="button"
+            disabled={currentPage === totalPages}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            Next
+          </button>
+        </nav>
+      </div>
+    </>
   );
 }
