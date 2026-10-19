@@ -607,3 +607,47 @@ button:focus-visible {
     scroll-behavior: auto;
   }
 }
+
+
+/* ========================================
+   TASK 2.3 - AUDIO FILE UPLOAD
+   ======================================== */
+
+.audio-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 20px;
+  background: #f4f7ff;
+  border: 1px solid #dce7f8;
+  border-radius: 14px;
+}
+
+.audio-upload label {
+  color: #182a53;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.audio-upload input {
+  width: 100%;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #c8d8f2;
+  border-radius: 9px;
+  color: #40577f;
+  font: inherit;
+}
+
+.audio-upload input:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.audio-upload p {
+  margin: 0;
+  color: #52688b;
+  font-size: 13px;
+  line-height: 1.6;
+}

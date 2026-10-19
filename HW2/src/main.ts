@@ -1,5 +1,5 @@
-
 import "./style.css";
+import { AudioEngine } from "./audio-engine";
 
 // Sample data for UI demonstration
 const tracks = [
@@ -204,3 +204,213 @@ app.innerHTML = `
     </main>
   </div>
 `;
+
+// ==================================================
+// TASK 2.3 - WEB AUDIO API ENGINE INTEGRATION
+// ==================================================
+
+// Create the audio processing engine
+const audioEngine = new AudioEngine();
+
+// Find existing player elements
+const playerSection =
+  document.querySelector<HTMLElement>("#player");
+
+const playButton =
+  document.querySelector<HTMLButtonElement>("#play-btn");
+
+const stopButton =
+  document.querySelector<HTMLButtonElement>("#stop-btn");
+
+const currentTitle =
+  document.querySelector<HTMLElement>("#current-title");
+
+const currentArtist =
+  document.querySelector<HTMLElement>("#current-artist");
+
+const totalTime =
+  document.querySelector<HTMLElement>("#total-time");
+
+const currentTime =
+  document.querySelector<HTMLElement>("#current-time");
+
+const statusLabel =
+  document.querySelector<HTMLElement>(".status-label");
+
+if (
+  !playerSection ||
+  !playButton ||
+  !stopButton ||
+  !currentTitle ||
+  !currentArtist ||
+  !totalTime ||
+  !currentTime ||
+  !statusLabel
+) {
+  throw new Error("Required player elements were not found");
+}
+
+// Add an audio file input to the existing player UI
+const uploadSection = document.createElement("div");
+
+uploadSection.className = "audio-upload";
+
+uploadSection.innerHTML = `
+  <label for="audio-file">
+    Choose an audio file
+  </label>
+
+  <input
+    type="file"
+    id="audio-file"
+    accept="audio/*"
+  />
+
+  <p id="audio-message" role="status" aria-live="polite">
+    Select a local audio file to test the Web Audio Engine.
+  </p>
+`;
+
+const visualizerPanel =
+  playerSection.querySelector(".visualizer-panel");
+
+playerSection.insertBefore(
+  uploadSection,
+  visualizerPanel
+);
+
+const fileInput =
+  document.querySelector<HTMLInputElement>("#audio-file");
+
+const audioMessage =
+  document.querySelector<HTMLElement>("#audio-message");
+
+if (!fileInput || !audioMessage) {
+  throw new Error("Audio upload controls were not found");
+}
+
+// Convert seconds to mm:ss
+function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "0:00";
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+// Track the latest file selection
+let loadVersion = 0;
+let isLoading = false;
+
+// Handle selecting a local audio file
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files?.[0];
+
+  if (!file) return;
+
+  const version = ++loadVersion;
+
+  isLoading = true;
+  playButton.disabled = true;
+  stopButton.disabled = true;
+
+  audioEngine.stop();
+
+  statusLabel.textContent = "Loading";
+  audioMessage.textContent = `Loading ${file.name}...`;
+
+  currentTime.textContent = "0:00";
+
+  try {
+    const buffer = await file.arrayBuffer();
+
+    if (version !== loadVersion) return;
+
+    await audioEngine.load(buffer);
+
+    if (version !== loadVersion) return;
+
+    currentTitle.textContent = file.name;
+    currentArtist.textContent = "Local Audio File";
+
+    totalTime.textContent =
+      formatTime(audioEngine.getDuration());
+
+    audioMessage.textContent =
+      "Audio decoded successfully. Ready to play.";
+
+    statusLabel.textContent = "Ready";
+
+    playButton.disabled = false;
+  } catch (error) {
+    if (version !== loadVersion) return;
+
+    console.error("Audio loading failed:", error);
+
+    audioMessage.textContent =
+      "Could not decode this audio file.";
+
+    statusLabel.textContent = "Error";
+  } finally {
+    if (version === loadVersion) {
+      isLoading = false;
+    }
+  }
+});
+
+// Start playback
+playButton.addEventListener("click", async () => {
+  if (isLoading || !audioEngine.hasAudio()) return;
+
+  playButton.disabled = true;
+
+  try {
+    await audioEngine.play();
+
+    stopButton.disabled = false;
+    playButton.textContent = "↻ Replay";
+
+    statusLabel.textContent = "Playing";
+    audioMessage.textContent = "Audio playback started.";
+  } catch (error) {
+    console.error("Playback failed:", error);
+
+    audioMessage.textContent =
+      "Unable to start audio playback.";
+
+    statusLabel.textContent = "Error";
+  } finally {
+    playButton.disabled = false;
+  }
+});
+
+// Stop playback
+stopButton.addEventListener("click", () => {
+  audioEngine.stop();
+
+  stopButton.disabled = true;
+
+  currentTime.textContent = "0:00";
+  playButton.textContent = "▶ Play";
+
+  statusLabel.textContent = "Stopped";
+  audioMessage.textContent = "Playback stopped.";
+});
+
+// When the audio finishes naturally
+audioEngine.onEnded = () => {
+  stopButton.disabled = true;
+
+  playButton.textContent = "▶ Play";
+  statusLabel.textContent = "Finished";
+
+  audioMessage.textContent =
+    "Playback finished. You can play it again.";
+};
+
+// Clean up resources when leaving the page
+window.addEventListener("pagehide", () => {
+  void audioEngine.dispose();
+});
+
