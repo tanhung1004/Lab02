@@ -534,3 +534,72 @@ a:focus-visible {
     scroll-behavior: auto;
   }
 }
+
+
+/* =========================================
+   TASK 2.6 - CANCELLATION CONTROLS
+   ========================================= */
+
+.queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.queue-actions button {
+  flex: 1;
+  min-width: 120px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.danger-btn {
+  color: #b42332;
+  background: #fff0f1;
+  border: 1px solid #f3bcc2;
+}
+
+.danger-btn:hover:not(:disabled) {
+  color: #ffffff;
+  background: #dc3545;
+  border-color: #dc3545;
+}
+
+.queue-actions .outline-btn {
+  color: #2344a3;
+  background: #eaf1ff;
+  border: 1px solid #c8d8f2;
+}
+
+.queue-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.queue-task-status.cancelled {
+  color: #6b7280;
+  background: #eceff3;
+}
+
+.queue-message {
+  margin: 16px 0 0;
+  color: #62749b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  .queue-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .queue-actions button {
+    width: 100%;
+    flex: none;
+  }
+}

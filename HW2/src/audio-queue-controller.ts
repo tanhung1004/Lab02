@@ -1,16 +1,26 @@
 
-export type TaskStatus =
-  | "Waiting"
-  | "Processing"
-  | "Completed"
-  | "Failed";
+export interface QueueCallbacks {
+  onStart?: () => void;
+  onCancel?: () => void;
+}
 
-export interface AudioQueueTask {
+interface AudioQueueTask {
   id: string;
   url: string;
-  onStart?: () => void;
+  controller: AbortController;
+  callbacks: QueueCallbacks;
   resolve: (buffer: AudioBuffer) => void;
-  reject: (error: Error) => void;
+  reject: (reason: Error) => void;
+}
+
+function abortError(): DOMException {
+  return new DOMException("Audio task cancelled", "AbortError");
+}
+
+function toError(value: unknown): Error {
+  return value instanceof Error
+    ? value
+    : new Error(String(value));
 }
 
 export class AudioTaskQueue {
@@ -21,10 +31,10 @@ export class AudioTaskQueue {
 
   constructor(private context: AudioContext) {}
 
-  // Add a task to the end of the queue
+  // Add a task to the end of the FIFO queue
   enqueue(
     url: string,
-    onStart?: () => void
+    callbacks: QueueCallbacks = {}
   ): Promise<AudioBuffer> {
     if (this.disposed) {
       return Promise.reject(
@@ -36,38 +46,41 @@ export class AudioTaskQueue {
       const task: AudioQueueTask = {
         id: crypto.randomUUID(),
         url,
-        onStart,
+        controller: new AbortController(),
+        callbacks,
         resolve,
         reject,
       };
 
       this.queue.push(task);
-
-      // Start a worker only when one is not running
       void this.processQueue();
     });
   }
 
-  // Sequential FIFO processing
+  // Process only one audio task at a time
   private async processQueue(): Promise<void> {
-    if (this.processing) return;
+    if (this.processing || this.disposed) return;
 
     this.processing = true;
 
     try {
-      while (this.queue.length > 0) {
+      while (this.queue.length > 0 && !this.disposed) {
         const task = this.queue.shift();
 
         if (!task) continue;
 
         this.activeTask = task;
+        const signal = task.controller.signal;
 
         try {
-          // Notify the UI only when this task starts
-          task.onStart?.();
+          if (signal.aborted) throw abortError();
 
-          // Download audio asynchronously
-          const response = await fetch(task.url);
+          task.callbacks.onStart?.();
+
+          // AbortSignal cancels an active download
+          const response = await fetch(task.url, {
+            signal,
+          });
 
           if (!response.ok) {
             throw new Error(
@@ -75,24 +88,24 @@ export class AudioTaskQueue {
             );
           }
 
-          // Convert response into binary data
-          const arrayBuffer =
-            await response.arrayBuffer();
+          const data = await response.arrayBuffer();
 
-          // Decode MP3/WAV into Web Audio buffer
-          const audioBuffer =
-            await this.context.decodeAudioData(
-              arrayBuffer
-            );
+          if (signal.aborted) throw abortError();
 
-          // Return decoded audio to the caller
-          task.resolve(audioBuffer);
-        } catch (error) {
-          task.reject(
-            error instanceof Error
-              ? error
-              : new Error(String(error))
-          );
+          // decodeAudioData cannot be interrupted directly
+          const decoded =
+            await this.context.decodeAudioData(data);
+
+          // Ignore decoded results from cancelled tasks
+          if (signal.aborted) throw abortError();
+
+          task.resolve(decoded);
+        } catch (error: unknown) {
+          if (signal.aborted) {
+            task.reject(abortError());
+          } else {
+            task.reject(toError(error));
+          }
         } finally {
           this.activeTask = null;
         }
@@ -102,30 +115,47 @@ export class AudioTaskQueue {
     }
   }
 
-  // Number of tasks waiting to be processed
+  // Cancel the task currently being processed
+  cancelActive(): boolean {
+    const task = this.activeTask;
+
+    if (!task || task.controller.signal.aborted) {
+      return false;
+    }
+
+    task.controller.abort();
+    task.callbacks.onCancel?.();
+
+    return true;
+  }
+
+  // Cancel tasks that have not started yet
+  clearPending(): number {
+    const tasks = this.queue.splice(0);
+
+    for (const task of tasks) {
+      task.controller.abort();
+      task.callbacks.onCancel?.();
+      task.reject(abortError());
+    }
+
+    return tasks.length;
+  }
+
   getPendingCount(): number {
     return this.queue.length;
   }
 
-  // Check whether a task is currently running
   isBusy(): boolean {
     return this.processing;
   }
 
-  // Reject tasks that have not started
-  clearPending(): void {
-    const pending = this.queue.splice(0);
-
-    for (const task of pending) {
-      task.reject(
-        new Error("Pending task was cleared")
-      );
-    }
-  }
-
-  // Prevent new tasks and clear waiting tasks
+  // Prevent new tasks and cancel existing ones
   dispose(): void {
+    if (this.disposed) return;
+
     this.disposed = true;
     this.clearPending();
+    this.cancelActive();
   }
 }
