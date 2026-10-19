@@ -1,416 +1,610 @@
+
 import "./style.css";
 import { AudioEngine } from "./audio-engine";
+import { AudioTaskQueue } from "./audio-queue-controller";
 
-// Sample data for UI demonstration
-const tracks = [
+// ==================================================
+// 1. AUDIO TRACK DATA
+// ==================================================
+
+interface Track {
+  id: string;
+  title: string;
+  artist: string;
+  duration: string;
+  url: string;
+}
+
+const tracks: Track[] = [
   {
     id: "T001",
     title: "Ambient Waves",
     artist: "WaveFlow Studio",
-    duration: "3:24",
+    duration: "Sample audio",
+    url: "/audio/ambient-waves.mp3",
   },
   {
     id: "T002",
     title: "Ocean Breeze",
     artist: "Blue Horizon",
-    duration: "4:12",
+    duration: "Sample audio",
+    url: "/audio/ocean-breeze.mp3",
   },
   {
     id: "T003",
     title: "Night Drive",
     artist: "Neon Dreams",
-    duration: "2:58",
+    duration: "Sample audio",
+    url: "/audio/night-drive.mp3",
   },
   {
     id: "T004",
     title: "Morning Light",
     artist: "Sunrise Audio",
-    duration: "3:45",
+    duration: "Sample audio",
+    url: "/audio/morning-light.mp3",
   },
 ];
+
+// ==================================================
+// 2. INITIALIZE AUDIO ENGINE AND FIFO QUEUE
+// ==================================================
+
+const audioEngine = new AudioEngine();
+
+const audioQueue = new AudioTaskQueue(
+  audioEngine.getContext()
+);
+
+const decodedTracks = new Map<string, AudioBuffer>();
+
+type QueueStatus =
+  | "Waiting"
+  | "Processing"
+  | "Completed"
+  | "Failed";
+
+interface QueueEntry {
+  id: string;
+  trackId: string;
+  title: string;
+  status: QueueStatus;
+}
+
+const queueEntries: QueueEntry[] = [];
+
+// ==================================================
+// 3. RENDER WAVEFLOW INTERFACE
+// ==================================================
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
-  throw new Error("Application root not found");
+  throw new Error("App root #app not found");
 }
 
-// Render application layout
 app.innerHTML = `
   <div class="app-shell">
+
+    <!-- HEADER -->
     <header class="header">
-      <a class="logo" href="#home">
-        <span aria-hidden="true">♫</span> WaveFlow
-      </a>
+      <a class="logo" href="#">♫ WaveFlow</a>
+
       <nav aria-label="Main navigation">
         <a href="#home">Home</a>
         <a href="#player">Player</a>
         <a href="#queue">Queue</a>
       </nav>
+
       <span class="header-label">AUDIO STUDIO</span>
     </header>
 
-    <main id="home">
-      <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-copy">
-          <span class="tag">FRONT-END HOMEWORK 2</span>
-          <h1 id="hero-title">Your Music. Visualized.</h1>
-          <p>
-            A concurrent FIFO audio engine featuring
-            real-time frequency visualization,
-            asynchronous processing and memory safety.
-          </p>
-          <div class="hero-tags">
-            <span>FIFO Processing</span>
-            <span>Web Audio API</span>
-            <span>60 FPS Target</span>
-          </div>
-        </div>
-        <div class="hero-art" aria-hidden="true">
-          <div class="vinyl">
-            <div class="vinyl-center">♫</div>
-          </div>
-        </div>
-      </section>
+    <!-- HERO -->
+    <section class="hero" id="home">
+      <div class="hero-copy">
 
-      <section class="player-card" id="player"
-        aria-labelledby="player-title">
-        <div class="section-heading">
-          <div>
-            <span class="eyebrow">NOW PLAYING</span>
-            <h2 id="player-title">Audio Player</h2>
-          </div>
-          <span class="status-label">Ready</span>
-        </div>
+        <span class="tag">
+          TYPESCRIPT + WEB AUDIO API
+        </span>
 
-        <div class="track-info">
-          <div class="album-icon" aria-hidden="true">♫</div>
-          <div>
-            <h3 id="current-title">No track selected</h3>
-            <p id="current-artist">Choose a track below</p>
-          </div>
-        </div>
+        <h1>
+          Your Music.<br>
+          Your Flow.
+        </h1>
 
-        <div class="visualizer-panel">
-          <div class="visualizer-header">
-            <span>Frequency Spectrum</span>
-            <span>FFT · 256/512 Bins</span>
-          </div>
-          <canvas
-            id="visualizer"
-            width="960"
-            height="220"
-            role="img"
-            aria-label="Audio frequency spectrum visualization"
-          ></canvas>
-        </div>
-
-        <div class="progress-bar" aria-hidden="true">
-          <div class="progress-fill"></div>
-        </div>
-
-        <div class="time-labels">
-          <span id="current-time">0:00</span>
-          <span id="total-time">0:00</span>
-        </div>
-
-        <div class="player-controls">
-          <button type="button" id="previous-btn"
-            aria-label="Previous track" disabled>
-            ⏮
-          </button>
-          <button type="button" id="play-btn"
-            class="primary-btn" disabled>
-            ▶ Play
-          </button>
-          <button type="button" id="stop-btn"
-            aria-label="Stop playback" disabled>
-            ■
-          </button>
-          <button type="button" id="next-btn"
-            aria-label="Next track" disabled>
-            ⏭
-          </button>
-        </div>
-
-        <p class="feature-note">
-          Audio playback will be connected in Task 2.3.
+        <p>
+          Explore asynchronous audio processing,
+          FIFO scheduling, and real-time sound analysis
+          in one modern audio studio.
         </p>
-      </section>
 
-      <div class="content-grid">
-        <section class="panel" id="library"
-          aria-labelledby="library-title">
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">MUSIC COLLECTION</span>
-              <h2 id="library-title">Track Library</h2>
-            </div>
-            <span class="count">${tracks.length} tracks</span>
-          </div>
-
-          <div class="track-list">
-            ${tracks.map((track) => `
-              <article class="track-item">
-                <div class="track-icon" aria-hidden="true">♫</div>
-                <div class="track-details">
-                  <h3>${track.title}</h3>
-                  <p>${track.artist}</p>
-                </div>
-                <span class="track-duration">${track.duration}</span>
-                <button type="button"
-                  class="queue-btn"
-                  aria-label="Add ${track.title} to queue"
-                  disabled>
-                  + Queue
-                </button>
-              </article>
-            `).join("")}
-          </div>
-        </section>
-
-        <section class="panel" id="queue"
-          aria-labelledby="queue-title">
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">FIRST IN, FIRST OUT</span>
-              <h2 id="queue-title">Processing Queue</h2>
-            </div>
-            <span class="count">0 pending</span>
-          </div>
-
-          <ol id="queue-list" class="queue-list">
-            <li class="empty-queue">
-              No audio tasks in the queue.
-            </li>
-          </ol>
-
-          <div class="queue-footer">
-            <div>
-              <strong>Queue Status</strong>
-              <span id="queue-status">Idle</span>
-            </div>
-            <button type="button" id="cancel-btn"
-              class="outline-btn" disabled>
-              Cancel Task
-            </button>
-          </div>
-        </section>
+        <div class="hero-tags">
+          <span>Web Audio API</span>
+          <span>FIFO Queue</span>
+          <span>TypeScript</span>
+        </div>
       </div>
 
-      <footer class="footer">
-        WaveFlow · Concurrent FIFO Audio Visualizer · HW2
-      </footer>
-    </main>
+      <div class="hero-art" aria-hidden="true">
+        <div class="vinyl">
+          <div class="vinyl-center">♫</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AUDIO PLAYER -->
+    <section class="player-card" id="player">
+
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">AUDIO PLAYER</span>
+          <h2>Now Playing</h2>
+        </div>
+
+        <span class="status-label" id="player-status">
+          Idle
+        </span>
+      </div>
+
+      <div class="track-info">
+        <div class="album-icon">♫</div>
+
+        <div>
+          <h3 id="current-title">
+            No track selected
+          </h3>
+
+          <p id="current-artist">
+            Choose a track from the library
+          </p>
+        </div>
+      </div>
+
+      <div class="visualizer-panel">
+        <div class="visualizer-header">
+          <span>Frequency Spectrum</span>
+          <span>FFT: 512</span>
+        </div>
+
+        <canvas
+          id="visualizer"
+          width="900"
+          height="220"
+          aria-label="Audio frequency visualization"
+        ></canvas>
+      </div>
+
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+
+      <div class="time-labels">
+        <span id="current-time">0:00</span>
+        <span id="total-time">0:00</span>
+      </div>
+
+      <div class="player-controls">
+        <button type="button" disabled>
+          ⏮ Previous
+        </button>
+
+        <button
+          type="button"
+          id="play-btn"
+          class="primary-btn"
+          disabled
+        >
+          ▶ Play
+        </button>
+
+        <button
+          type="button"
+          id="stop-btn"
+          disabled
+        >
+          ■ Stop
+        </button>
+
+        <button type="button" disabled>
+          Next ⏭
+        </button>
+      </div>
+
+      <p class="feature-note" id="player-message" role="status">
+        Add a track to the queue to download and decode it.
+      </p>
+    </section>
+
+    <!-- LIBRARY AND QUEUE -->
+    <div class="content-grid">
+
+      <!-- TRACK LIBRARY -->
+      <section class="panel" id="library">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">MUSIC COLLECTION</span>
+            <h2>Track Library</h2>
+          </div>
+
+          <span class="count">
+            ${tracks.length} Tracks
+          </span>
+        </div>
+
+        <div class="track-list">
+
+          ${tracks
+            .map(
+              (track) => `
+                <div class="track-item">
+                  <div class="track-icon">♫</div>
+
+                  <div class="track-details">
+                    <h3>${track.title}</h3>
+                    <p>
+                      ${track.artist}
+                      · ${track.duration}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    class="queue-btn"
+                    data-track-id="${track.id}"
+                  >
+                    + Queue
+                  </button>
+                </div>
+              `
+            )
+            .join("")}
+
+        </div>
+      </section>
+
+      <!-- FIFO QUEUE -->
+      <section class="panel" id="queue">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">FIFO ENGINE</span>
+            <h2>Processing Queue</h2>
+          </div>
+
+          <span class="count" id="queue-count">
+            0 pending
+          </span>
+        </div>
+
+        <ol class="queue-list" id="queue-list">
+          <li class="empty-queue">
+            No audio tasks in the queue.
+          </li>
+        </ol>
+
+        <div class="queue-footer">
+          <div>
+            <strong>Engine Status</strong>
+            <span id="queue-status">Idle</span>
+          </div>
+
+          <button
+            type="button"
+            id="clear-btn"
+            class="outline-btn"
+          >
+            Clear History
+          </button>
+        </div>
+      </section>
+
+    </div>
+
+    <footer class="footer">
+      WaveFlow Music Studio · TypeScript · Web Audio API
+    </footer>
   </div>
 `;
 
 // ==================================================
-// TASK 2.3 - WEB AUDIO API ENGINE INTEGRATION
+// 4. DOM REFERENCES
 // ==================================================
 
-// Create the audio processing engine
-const audioEngine = new AudioEngine();
+function requiredElement<T extends Element>(
+  selector: string
+): T {
+  const element = document.querySelector<T>(selector);
 
-// Find existing player elements
-const playerSection =
-  document.querySelector<HTMLElement>("#player");
+  if (!element) {
+    throw new Error(`Missing element: ${selector}`);
+  }
 
-const playButton =
-  document.querySelector<HTMLButtonElement>("#play-btn");
+  return element;
+}
 
-const stopButton =
-  document.querySelector<HTMLButtonElement>("#stop-btn");
+const queueList =
+  requiredElement<HTMLOListElement>("#queue-list");
+
+const queueCount =
+  requiredElement<HTMLElement>("#queue-count");
+
+const queueStatus =
+  requiredElement<HTMLElement>("#queue-status");
+
+const playerStatus =
+  requiredElement<HTMLElement>("#player-status");
+
+const playerMessage =
+  requiredElement<HTMLElement>("#player-message");
 
 const currentTitle =
-  document.querySelector<HTMLElement>("#current-title");
+  requiredElement<HTMLElement>("#current-title");
 
 const currentArtist =
-  document.querySelector<HTMLElement>("#current-artist");
-
-const totalTime =
-  document.querySelector<HTMLElement>("#total-time");
+  requiredElement<HTMLElement>("#current-artist");
 
 const currentTime =
-  document.querySelector<HTMLElement>("#current-time");
+  requiredElement<HTMLElement>("#current-time");
 
-const statusLabel =
-  document.querySelector<HTMLElement>(".status-label");
+const totalTime =
+  requiredElement<HTMLElement>("#total-time");
 
-if (
-  !playerSection ||
-  !playButton ||
-  !stopButton ||
-  !currentTitle ||
-  !currentArtist ||
-  !totalTime ||
-  !currentTime ||
-  !statusLabel
-) {
-  throw new Error("Required player elements were not found");
-}
+const playButton =
+  requiredElement<HTMLButtonElement>("#play-btn");
 
-// Add an audio file input to the existing player UI
-const uploadSection = document.createElement("div");
+const stopButton =
+  requiredElement<HTMLButtonElement>("#stop-btn");
 
-uploadSection.className = "audio-upload";
+const clearButton =
+  requiredElement<HTMLButtonElement>("#clear-btn");
 
-uploadSection.innerHTML = `
-  <label for="audio-file">
-    Choose an audio file
-  </label>
+// ==================================================
+// 5. UTILITY FUNCTIONS
+// ==================================================
 
-  <input
-    type="file"
-    id="audio-file"
-    accept="audio/*"
-  />
-
-  <p id="audio-message" role="status" aria-live="polite">
-    Select a local audio file to test the Web Audio Engine.
-  </p>
-`;
-
-const visualizerPanel =
-  playerSection.querySelector(".visualizer-panel");
-
-playerSection.insertBefore(
-  uploadSection,
-  visualizerPanel
-);
-
-const fileInput =
-  document.querySelector<HTMLInputElement>("#audio-file");
-
-const audioMessage =
-  document.querySelector<HTMLElement>("#audio-message");
-
-if (!fileInput || !audioMessage) {
-  throw new Error("Audio upload controls were not found");
-}
-
-// Convert seconds to mm:ss
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return "0:00";
 
   const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
+  const remaining = Math.floor(seconds % 60);
 
-  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+  return `${minutes}:${String(remaining).padStart(2, "0")}`;
 }
 
-// Track the latest file selection
-let loadVersion = 0;
-let isLoading = false;
+// Safely display the FIFO queue
+function renderQueue(): void {
+  queueList.replaceChildren();
 
-// Handle selecting a local audio file
-fileInput.addEventListener("change", async () => {
-  const file = fileInput.files?.[0];
+  for (const entry of queueEntries) {
+    const item = document.createElement("li");
+    item.className = "queue-entry";
 
-  if (!file) return;
+    const title = document.createElement("strong");
+    title.textContent = entry.title;
 
-  const version = ++loadVersion;
+    const status = document.createElement("span");
+    status.className =
+      `queue-task-status ${entry.status.toLowerCase()}`;
 
-  isLoading = true;
-  playButton.disabled = true;
-  stopButton.disabled = true;
+    status.textContent = entry.status;
 
-  audioEngine.stop();
-
-  statusLabel.textContent = "Loading";
-  audioMessage.textContent = `Loading ${file.name}...`;
-
-  currentTime.textContent = "0:00";
-
-  try {
-    const buffer = await file.arrayBuffer();
-
-    if (version !== loadVersion) return;
-
-    await audioEngine.load(buffer);
-
-    if (version !== loadVersion) return;
-
-    currentTitle.textContent = file.name;
-    currentArtist.textContent = "Local Audio File";
-
-    totalTime.textContent =
-      formatTime(audioEngine.getDuration());
-
-    audioMessage.textContent =
-      "Audio decoded successfully. Ready to play.";
-
-    statusLabel.textContent = "Ready";
-
-    playButton.disabled = false;
-  } catch (error) {
-    if (version !== loadVersion) return;
-
-    console.error("Audio loading failed:", error);
-
-    audioMessage.textContent =
-      "Could not decode this audio file.";
-
-    statusLabel.textContent = "Error";
-  } finally {
-    if (version === loadVersion) {
-      isLoading = false;
-    }
+    item.append(title, status);
+    queueList.appendChild(item);
   }
-});
 
-// Start playback
-playButton.addEventListener("click", async () => {
-  if (isLoading || !audioEngine.hasAudio()) return;
+  if (queueEntries.length === 0) {
+    const emptyItem = document.createElement("li");
 
+    emptyItem.className = "empty-queue";
+    emptyItem.textContent = "No audio tasks in the queue.";
+
+    queueList.appendChild(emptyItem);
+  }
+
+  const pending = queueEntries.filter(
+    (entry) =>
+      entry.status === "Waiting" ||
+      entry.status === "Processing"
+  ).length;
+
+  const processing = queueEntries.some(
+    (entry) => entry.status === "Processing"
+  );
+
+  queueCount.textContent = `${pending} pending`;
+
+  queueStatus.textContent =
+    processing ? "Processing" : "Idle";
+}
+
+// ==================================================
+// 6. PLAYBACK CONTROLS
+// ==================================================
+
+let isStartingPlayback = false;
+
+async function playTrack(): Promise<void> {
+  if (!audioEngine.hasAudio() || isStartingPlayback) {
+    return;
+  }
+
+  isStartingPlayback = true;
   playButton.disabled = true;
 
   try {
     await audioEngine.play();
 
     stopButton.disabled = false;
+
+    playerStatus.textContent = "Playing";
+    playerMessage.textContent = "Audio is playing.";
+
     playButton.textContent = "↻ Replay";
-
-    statusLabel.textContent = "Playing";
-    audioMessage.textContent = "Audio playback started.";
   } catch (error) {
-    console.error("Playback failed:", error);
+    console.error("Playback error:", error);
 
-    audioMessage.textContent =
-      "Unable to start audio playback.";
-
-    statusLabel.textContent = "Error";
+    playerStatus.textContent = "Error";
+    playerMessage.textContent =
+      "Unable to start playback.";
   } finally {
+    isStartingPlayback = false;
     playButton.disabled = false;
   }
+}
+
+playButton.addEventListener("click", () => {
+  void playTrack();
 });
 
-// Stop playback
 stopButton.addEventListener("click", () => {
   audioEngine.stop();
 
   stopButton.disabled = true;
-
-  currentTime.textContent = "0:00";
   playButton.textContent = "▶ Play";
 
-  statusLabel.textContent = "Stopped";
-  audioMessage.textContent = "Playback stopped.";
+  currentTime.textContent = "0:00";
+
+  playerStatus.textContent = "Stopped";
+  playerMessage.textContent = "Playback stopped.";
 });
 
-// When the audio finishes naturally
 audioEngine.onEnded = () => {
   stopButton.disabled = true;
 
   playButton.textContent = "▶ Play";
-  statusLabel.textContent = "Finished";
 
-  audioMessage.textContent =
-    "Playback finished. You can play it again.";
+  playerStatus.textContent = "Finished";
+  playerMessage.textContent =
+    "Playback finished. Press Play to restart.";
 };
 
-// Clean up resources when leaving the page
+// ==================================================
+// 7. PREPARE DECODED AUDIO FOR PLAYBACK
+// ==================================================
+
+function prepareTrack(
+  track: Track,
+  buffer: AudioBuffer
+): void {
+  audioEngine.setBuffer(buffer);
+
+  currentTitle.textContent = track.title;
+  currentArtist.textContent = track.artist;
+
+  currentTime.textContent = "0:00";
+  totalTime.textContent = formatTime(buffer.duration);
+
+  playButton.textContent = "▶ Play";
+  playButton.disabled = false;
+  stopButton.disabled = true;
+
+  playerStatus.textContent = "Ready";
+  playerMessage.textContent =
+    `${track.title} is ready to play.`;
+}
+
+// ==================================================
+// 8. FIFO QUEUE EVENT HANDLING
+// ==================================================
+
+let entryCounter = 0;
+
+function addTrackToQueue(track: Track): void {
+  const entry: QueueEntry = {
+    id: `queue-${++entryCounter}`,
+    trackId: track.id,
+    title: track.title,
+    status: "Waiting",
+  };
+
+  queueEntries.push(entry);
+  renderQueue();
+
+  // Already decoded? Prepare it without downloading again
+  const cachedBuffer = decodedTracks.get(track.id);
+
+  if (cachedBuffer) {
+    entry.status = "Completed";
+    prepareTrack(track, cachedBuffer);
+    renderQueue();
+    return;
+  }
+
+  // Enqueue returns a Promise<AudioBuffer>
+  void audioQueue
+    .enqueue(track.url, () => {
+      // Only this task becomes Processing
+      entry.status = "Processing";
+      renderQueue();
+    })
+    .then((buffer) => {
+      decodedTracks.set(track.id, buffer);
+
+      entry.status = "Completed";
+      renderQueue();
+
+      // The most recently completed track becomes ready
+      prepareTrack(track, buffer);
+    })
+    .catch((error: unknown) => {
+      console.error(`Queue failed: ${track.title}`, error);
+
+      entry.status = "Failed";
+      renderQueue();
+
+      playerMessage.textContent =
+        `Failed to load ${track.title}. Check its MP3 file.`;
+    });
+}
+
+// Event delegation for all Queue buttons
+const library =
+  requiredElement<HTMLElement>("#library");
+
+library.addEventListener("click", (event) => {
+  const target = event.target;
+
+  if (!(target instanceof Element)) return;
+
+  const button = target.closest<HTMLButtonElement>(
+    ".queue-btn"
+  );
+
+  if (!button) return;
+
+  const trackId = button.dataset.trackId;
+
+  const track = tracks.find(
+    (item) => item.id === trackId
+  );
+
+  if (!track) return;
+
+  addTrackToQueue(track);
+});
+
+// ==================================================
+// 9. CLEAR COMPLETED/FAILED HISTORY
+// ==================================================
+
+clearButton.addEventListener("click", () => {
+  for (let i = queueEntries.length - 1; i >= 0; i--) {
+    const status = queueEntries[i].status;
+
+    if (status === "Completed" || status === "Failed") {
+      queueEntries.splice(i, 1);
+    }
+  }
+
+  renderQueue();
+});
+
+// ==================================================
+// 10. CLEAN UP
+// ==================================================
+
 window.addEventListener("pagehide", () => {
+  audioQueue.dispose();
   void audioEngine.dispose();
 });
 
+renderQueue();

@@ -11,47 +11,62 @@ export class AudioEngine {
   public onEnded?: () => void;
 
   constructor() {
-    // Create Web Audio processing environment
     this.context = new AudioContext();
 
-    // Set up frequency analysis
     this.analyser = this.context.createAnalyser();
     this.analyser.fftSize = 512;
     this.analyser.smoothingTimeConstant = 0.8;
 
-    // Set up audio output
     this.gainNode = this.context.createGain();
     this.gainNode.gain.value = 1;
 
-    // Audio processing graph
     this.analyser.connect(this.gainNode);
     this.gainNode.connect(this.context.destination);
   }
 
-  // Decode audio data into an AudioBuffer
-  async load(arrayBuffer: ArrayBuffer): Promise<void> {
-    this.assertActive();
-
-    const decodedBuffer =
-      await this.context.decodeAudioData(arrayBuffer);
-
-    this.assertActive();
-    this.stop();
-
-    this.buffer = decodedBuffer;
+  // Share the AudioContext with the FIFO queue
+  getContext(): AudioContext {
+    return this.context;
   }
 
-  // Start playback
-  async play(): Promise<void> {
-    this.assertActive();
+  // Expose frequency analysis node for Task 2.7
+  getAnalyser(): AnalyserNode {
+    return this.analyser;
+  }
 
-    if (!this.buffer) {
-      throw new Error("No audio file loaded");
+  // Receive decoded audio from the queue
+  setBuffer(buffer: AudioBuffer): void {
+    if (this.disposed) {
+      throw new Error("Audio engine is disposed");
     }
 
-    // Browsers may suspend AudioContext initially
+    this.stop();
+    this.buffer = buffer;
+  }
+
+  // Decode an audio file directly if needed
+  async load(data: ArrayBuffer): Promise<void> {
+    if (this.disposed) {
+      throw new Error("Audio engine is disposed");
+    }
+
+    const buffer =
+      await this.context.decodeAudioData(data);
+
+    this.setBuffer(buffer);
+  }
+
+  // Start playing the prepared audio buffer
+  async play(): Promise<void> {
+    if (this.disposed || !this.buffer) {
+      throw new Error("No audio available");
+    }
+
     await this.context.resume();
-    this.assertActive();
+
+    if (this.disposed) {
+      throw new Error("Audio engine is disposed");
+    }
 
     this.stop();
 
@@ -65,52 +80,40 @@ export class AudioEngine {
     source.onended = () => {
       if (this.source !== source) return;
 
-      source.disconnect();
       this.source = null;
-
+      source.disconnect();
       this.onEnded?.();
     };
 
     source.start(0);
   }
 
-  // Stop playback and release the source node
+  // Stop the current source
   stop(): void {
-    if (!this.source) return;
-
     const source = this.source;
-    this.source = null;
+    if (!source) return;
 
+    this.source = null;
     source.onended = null;
 
     try {
       source.stop();
     } catch {
-      // Source may already have stopped
+      // Source may have already stopped
     }
 
     source.disconnect();
-  }
-
-  getAnalyser(): AnalyserNode {
-    return this.analyser;
-  }
-
-  getDuration(): number {
-    return this.buffer?.duration ?? 0;
   }
 
   hasAudio(): boolean {
     return this.buffer !== null;
   }
 
-  private assertActive(): void {
-    if (this.disposed) {
-      throw new Error("AudioEngine has been disposed");
-    }
+  getDuration(): number {
+    return this.buffer?.duration ?? 0;
   }
 
-  // Release Web Audio resources
+  // Release the audio graph
   async dispose(): Promise<void> {
     if (this.disposed) return;
 
