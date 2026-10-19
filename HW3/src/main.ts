@@ -2,6 +2,7 @@
 import "./style.css";
 import { OrderQueue } from "./order-queue";
 import type { OrderRequest, OrderResult } from "./order-queue";
+import { mountRaceConditionTest } from "./race-condition-test";
 
 // ==========================================
 // HW3 - TASK 3.4: CONCURRENT ORDER PROCESSING
@@ -744,3 +745,5 @@ window.addEventListener("pagehide", () => {
     updateCountdown
   );
 });
+// TASK 3.5 - Mount race condition comparison
+mountRaceConditionTest();
