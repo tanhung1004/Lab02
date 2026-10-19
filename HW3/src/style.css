@@ -661,3 +661,64 @@ a:focus-visible {
     font-size: 22px;
   }
 }
+
+/* =========================================
+   TASK 3.8 - RESERVATION & CHECKOUT
+   ========================================= */
+
+.reservation-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.reservation-stats .stat-card strong {
+  font-size: clamp(16px, 2vw, 25px);
+  overflow-wrap: anywhere;
+}
+
+.reservation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.reservation-actions .simulate-button {
+  margin-top: 0;
+}
+
+.reservation-cancel-btn {
+  padding: 13px 24px;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  background: #fff1f2;
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.reservation-cancel-btn:hover:not(:disabled) {
+  background: #ffe4e6;
+}
+
+.reservation-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .reservation-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .reservation-actions {
+    flex-direction: column;
+  }
+
+  .reservation-actions button {
+    width: 100%;
+  }
+}
